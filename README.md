@@ -1,7 +1,8 @@
-Mizuto – mizu (水, fluidity) + to (ト, trade), smooth and adaptive
+# Mizuto – mizu (水, fluidity) + to (ト, trade), smooth and adaptive
 
+<img width="300" height="300" alt="mizuto" src="https://github.com/user-attachments/assets/6e340722-2c82-41c6-9b05-3c618b16c308" />
 
-# Algorithmic Trading Bot Development Roadmap
+## Algorithmic Trading Bot Development Roadmap
 
 This roadmap outlines the key phases and steps to build, test, and deploy an algorithmic trading bot that uses a predictive model.
 
