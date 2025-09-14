@@ -22,6 +22,8 @@ def main():
         long_window=LONG_WINDOW
     )
 
+    bot.load_historical_data()  # Manually load historical data
+
     logging.info(f"Starting trading bot for {SYMBOL}...")
     while True:
         try:

@@ -29,21 +29,21 @@ The goal of this phase is to build the basic scaffolding for the bot and impleme
 
 This phase focuses on testing the simple strategy against historical data to gauge its viability.
 
-- [ ] **Step 2.1: Acquire Historical Market Data**
-  - [ ] Use a library like `yfinance` or `ccxt` to download historical price data (OHLCV - Open, High, Low, Close, Volume).
-  - [ ] Store the data in a consistent format (e.g., CSV or a database).
+- [x] **Step 2.1: Acquire Historical Market Data**
+  - [x] Use a library like `yfinance` or `ccxt` to download historical price data (OHLCV - Open, High, Low, Close, Volume).
+  - [] Store the data in a consistent format (e.g., CSV or a database).
 
-- [ ] **Step 2.2: Develop a Backtesting Engine**
-  - [ ] Create a script (`backtest.py`) that iterates through the historical data point-by-point.
-  - [ ] Simulate the execution of your strategy, tracking a virtual portfolio (cash, assets, PnL).
-  - [ ] Log every simulated trade (entry/exit price, timestamp, amount).
+- [x] **Step 2.2: Develop a Backtesting Engine**
+  - [x] Create a script (`backtest.py`) that iterates through the historical data point-by-point.
+  - [x] Simulate the execution of your strategy, tracking a virtual portfolio (cash, assets, PnL).
+  - [x] Log every simulated trade (entry/exit price, timestamp, amount).
 
-- [ ] **Step 2.3: Analyze Backtest Results**
-  - [ ] Calculate key performance metrics:
-    - [ ] Total Profit/Loss (PnL)
-    - [ ] Win/Loss Ratio
-    - [ ] Sharpe Ratio (risk-adjusted return)
-    - [ ] Maximum Drawdown (largest peak-to-trough decline)
+- [x] **Step 2.3: Analyze Backtest Results**
+  - [x] Calculate key performance metrics:
+    - [x] Total Profit/Loss (PnL)
+    - [x] Win/Loss Ratio
+    - [x] Sharpe Ratio (risk-adjusted return)
+    - [x] Maximum Drawdown (largest peak-to-trough decline)
 
 ---
 
