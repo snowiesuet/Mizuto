@@ -1,0 +1,170 @@
+//@version=6
+strategy(title="ADX + ATR Trend Breakout Strategy", overlay=true, initial_capital=10000, commission_type=strategy.commission.cash_per_contract, commission_value=1)
+
+// ===================================
+// ADX + ATR TREND BREAKOUT STRATEGY
+// ===================================
+//
+// This strategy combines:
+// 1. ADX (Average Directional Index) - to identify strong trending conditions
+// 2. ATR (Average True Range) - for dynamic breakout levels and risk management
+//
+// Strategy Logic:
+// - Enter long when price breaks above ATR-based resistance during strong ADX trend
+// - Enter short when price breaks below ATR-based support during strong ADX trend
+//
+// ===================================
+
+// === INPUT PARAMETERS ===
+
+// Backtest Settings
+useDateFilter = input.bool(false, title="Filter Date Range", group="Backtest Settings")
+startDate = input.time(timestamp("1 Jan 2024"), title="Start Date", group="Backtest Settings")
+endDate = input.time(timestamp("31 Dec 2024"), title="End Date", group="Backtest Settings")
+inDateRange = not useDateFilter or (time >= startDate and time <= endDate)
+
+// ADX Settings
+adx_length = input.int(14, title="ADX Length", group="ADX Settings", minval=1)
+adx_threshold = input.int(25, title="ADX Trend Strength Threshold", group="ADX Settings", minval=1, maxval=100)
+di_cross_filter = input.bool(true, title="Require DI Cross for Entry", group="ADX Settings")
+
+// ATR Settings  
+atr_length = input.int(14, title="ATR Length", group="ATR Settings", minval=1)
+atr_multiplier = input.float(1.5, title="ATR Breakout Multiplier", group="ATR Settings", minval=0.1, step=0.1)
+lookback_period = input.int(20, title="Breakout Lookback Period", group="ATR Settings", minval=5)
+
+// Risk Management
+stop_loss_atr = input.float(2.0, title="Stop Loss ATR Multiplier", group="Risk Management", minval=0.1, step=0.1)
+take_profit_atr = input.float(3.0, title="Take Profit ATR Multiplier", group="Risk Management", minval=0.1, step=0.1)
+use_trailing_stop = input.bool(true, title="Use Trailing Stop", group="Risk Management")
+trailing_atr = input.float(1.5, title="Trailing Stop ATR Multiplier", group="Risk Management", minval=0.1, step=0.1)
+
+// === INDICATOR CALCULATIONS ===
+
+// ADX Calculation
+[plus_di, minus_di, adx_value] = ta.dmi(adx_length, adx_length)
+
+// ATR Calculation
+atr_value = ta.atr(atr_length)
+
+// Trend Direction Based on DI
+bullish_di = plus_di > minus_di
+bearish_di = minus_di > plus_di
+di_cross_up = ta.crossover(plus_di, minus_di)
+di_cross_down = ta.crossunder(plus_di, minus_di)
+
+// Strong Trend Condition
+strong_trend = adx_value > adx_threshold
+
+// === ATR-BASED BREAKOUT LEVELS ===
+
+// Calculate recent highs and lows
+recent_high = ta.highest(high, lookback_period)
+recent_low = ta.lowest(low, lookback_period)
+
+// ATR-based breakout levels
+breakout_high = recent_high + (atr_value * atr_multiplier)
+breakout_low = recent_low - (atr_value * atr_multiplier)
+
+// Alternative: Use close-based levels for more sensitive entries
+close_high = ta.highest(close, lookback_period)
+close_low = ta.lowest(close, lookback_period)
+close_breakout_high = close_high + (atr_value * atr_multiplier)
+close_breakout_low = close_low - (atr_value * atr_multiplier)
+
+// === ENTRY CONDITIONS ===
+
+// Basic breakout conditions
+price_above_breakout = close > breakout_high
+price_below_breakout = close < breakout_low
+
+// DI Cross conditions (optional filter)
+di_confirms_long = not di_cross_filter or (bullish_di and (di_cross_up or di_cross_up[1]))
+di_confirms_short = not di_cross_filter or (bearish_di and (di_cross_down or di_cross_down[1]))
+
+// Complete entry conditions
+long_condition = price_above_breakout and strong_trend and di_confirms_long and inDateRange
+short_condition = price_below_breakout and strong_trend and di_confirms_short and inDateRange
+
+// Prevent re-entries too quickly (optional filter)
+var int last_long_bar = na
+var int last_short_bar = na
+min_bars_between_entries = 5
+
+can_enter_long = na(last_long_bar) or (bar_index - last_long_bar) > min_bars_between_entries
+can_enter_short = na(last_short_bar) or (bar_index - last_short_bar) > min_bars_between_entries
+
+// Final entry conditions with re-entry filter
+enter_long = long_condition and can_enter_long and strategy.position_size <= 0
+enter_short = short_condition and can_enter_short and strategy.position_size >= 0
+
+// === STRATEGY EXECUTION ===
+
+// Entry orders
+if enter_long
+    strategy.entry("Long", strategy.long)
+    last_long_bar := bar_index
+
+if enter_short
+    strategy.entry("Short", strategy.short)
+    last_short_bar := bar_index
+
+// === RISK MANAGEMENT ===
+
+// Calculate stop-loss and take-profit levels
+long_stop = strategy.position_avg_price - (atr_value * stop_loss_atr)
+long_tp = strategy.position_avg_price + (atr_value * take_profit_atr)
+
+short_stop = strategy.position_avg_price + (atr_value * stop_loss_atr)
+short_tp = strategy.position_avg_price - (atr_value * take_profit_atr)
+
+// Apply stop-loss and take-profit
+if strategy.position_size > 0
+    if use_trailing_stop
+        strategy.exit("Long Exit", "Long", trail_points=math.round(atr_value * trailing_atr * 100), trail_offset=math.round(atr_value * trailing_atr * 100))
+    else
+        strategy.exit("Long Exit", "Long", stop=long_stop, limit=long_tp)
+
+if strategy.position_size < 0
+    if use_trailing_stop
+        strategy.exit("Short Exit", "Short", trail_points=math.round(atr_value * trailing_atr * 100), trail_offset=math.round(atr_value * trailing_atr * 100))
+    else
+        strategy.exit("Short Exit", "Short", stop=short_stop, limit=short_tp)
+
+// Emergency exit if ADX drops significantly (trend weakening)
+weak_trend_exit = adx_value < (adx_threshold * 0.7)
+if weak_trend_exit
+    strategy.close_all(comment="Weak Trend Exit")
+
+// === VISUALIZATION ===
+
+// Plot breakout levels on main chart (price-based)
+plot(breakout_high, color=color.lime, linewidth=2, title="Upper Breakout Level")
+plot(breakout_low, color=color.red, linewidth=2, title="Lower Breakout Level")
+
+// Plot recent high/low reference lines on main chart (price-based)
+plot(recent_high, color=color.new(color.lime, 60), linewidth=1, title="Recent High")
+plot(recent_low, color=color.new(color.red, 60), linewidth=1, title="Recent Low")
+
+// Entry signal markers on main chart
+plotshape(enter_long, style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.normal, title="Long Entry")
+plotshape(enter_short, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.normal, title="Short Entry")
+
+// Background color for strong trend periods on main chart
+bgcolor(strong_trend ? (bullish_di ? color.new(color.green, 95) : color.new(color.red, 95)) : na, title="Trend Background")
+
+// === ADX INDICATOR PANE (SEPARATE WINDOW) ===
+// Plot ADX and DI in separate indicator pane (0-100 scale)
+plot(adx_value, color=color.blue, linewidth=2, title="ADX", display=display.pane)
+plot(plus_di, color=color.green, linewidth=1, title="+DI", display=display.pane)
+plot(minus_di, color=color.red, linewidth=1, title="-DI", display=display.pane)
+
+// ADX threshold line in indicator pane
+plot(adx_threshold, "ADX Threshold", color=color.gray, linewidth=1, linestyle=plot.linestyle_dashed, display=display.pane)
+
+// Fill between DI lines in indicator pane
+adx_plot = plot(adx_value, color=color.new(color.blue, 100), display=display.pane, title="ADX Fill Helper")
+plus_di_plot = plot(plus_di, color=color.new(color.green, 100), display=display.pane, title="+DI Fill Helper")
+minus_di_plot = plot(minus_di, color=color.new(color.red, 100), display=display.pane, title="-DI Fill Helper")
+
+fill(plus_di_plot, minus_di_plot, color=bullish_di ? color.new(color.green, 90) : color.new(color.red, 90), title="DI Fill")

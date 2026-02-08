@@ -1,0 +1,263 @@
+//@version=6
+indicator('NQ HVN', overlay=true)
+
+// ===== Input Settings =====
+// Price Levels Display
+lineColor = input.color(color.green, 'Line Color')
+lineLength = input.int(10, 'Line Length', minval=1)
+lineThickness = input.int(1, 'Line Thickness', minval=1, maxval=5)
+lineStyleInput = input.string('Solid', 'Line Style', options=['Solid', 'Dashed', 'Dotted'])
+lineOffset = input.int(5, 'Line Offset', minval=0)
+
+// Text Labels
+textXOffsetBars = input.int(10, 'Text X Offset (Bars)', minval=-50, maxval=50)
+textYOffsetPrice = input.float(0.0, 'Text Y Offset (Price)', minval=-100.0, maxval=100.0, step=0.1)
+textSizeInput = input.string('Normal', 'Text Size', options=['Tiny', 'Small', 'Normal', 'Large', 'Huge'])
+
+// Auto-Segments
+priceReference = input.string('Close', 'Price Reference', options=['Close', 'High', 'Low', 'HL2'])
+segmentsAbove = input.int(2, 'Segments Above', minval=0, maxval=10)
+segmentsBelow = input.int(2, 'Segments Below', minval=0, maxval=10)
+bufferPoints = input.float(50.0, 'Buffer Points', minval=0, step=10)
+
+// Daily High/Low
+showDailyLevels = input.bool(true, 'Show Daily High/Low')
+dailyHighColor = input.color(color.red, 'Daily High Color')
+dailyLowColor = input.color(color.blue, 'Daily Low Color')
+dailyLineThickness = input.int(2, 'Daily Line Thickness', minval=1, maxval=5)
+dailyLineStyle = input.string('Solid', 'Daily Line Style', options=['Solid', 'Dashed', 'Dotted'])
+
+// Alerts
+alertOnPriceLevels = input.bool(true, 'Alert on Price Levels')
+alertOnDailyLevels = input.bool(true, 'Alert on Daily High/Low')
+alertOnBothConditions = input.bool(true, 'Alert on Both Conditions')
+alertPriceTolerance = input.float(2.0, 'Alert Price Tolerance', minval=0.1, step=0.1)
+
+// ===== Style Conversions =====
+lineStyle = switch lineStyleInput
+    'Dashed' => line.style_dashed
+    'Dotted' => line.style_dotted
+    => line.style_solid
+
+textSize = switch textSizeInput
+    'Tiny' => size.tiny
+    'Small' => size.small
+    'Large' => size.large
+    'Huge' => size.huge
+    => size.normal
+
+dailyLineStyleConverted = switch dailyLineStyle
+    'Dashed' => line.style_dashed
+    'Dotted' => line.style_dotted
+    => line.style_solid
+
+// ===== Price Levels Data =====
+segmentBoundaries = array.from<float>(25000, 24800, 24600, 24400, 24200, 24000, 23800, 23600, 23400, 23200, 23000, 22800, 22600, 22400, 22200, 22000, 21800, 21600, 21400, 21200, 21000, 20800, 20600, 20400, 20200, 20000, 19800, 19600, 19400, 19200, 19000, 18800, 18600, 18400, 18200, 18000)
+
+prices = array.from<float>(
+     24850, 24817, 24730, 24645, 24535, 24345, 24265, 24166, 23930, 23790,
+     23730, 23674, 23646, 23590, 23487, 23442, 23395, 23170, 23080, 23060,
+     23050, 23035, 23015, 23000, 22990, 22950, 22920, 22910, 22736, 22720,
+     22700, 22684, 22672, 22668, 22660, 22640, 22621, 22617, 22602, 22590,
+     22569, 22562, 22556, 22535, 22515, 22497, 22454, 22443, 22430, 22407,
+     22350, 22335, 22325, 22310, 22300, 22295, 22276, 22203, 22120, 22086,
+     22041, 22006, 21991, 21960, 21895, 21861, 21813, 21790, 21762, 21687,
+     21652, 21643, 21630, 21625, 21609, 21524, 21504, 21475, 21453, 21420,
+     21395, 21350, 21325, 21295, 21254, 21221, 21186, 21166, 21133, 21128,
+     21106, 21078, 21054, 21030, 21011, 20934, 20892, 20882, 20799, 20761,
+     20743, 20735.25, 20728, 20678, 20673.75, 20633, 20628, 20625, 20614, 20605,
+     20597, 20582, 20566, 20557.25, 20556, 20532.75, 20514, 20501, 20481, 20479,
+     20450, 20430, 20410, 20404.75, 20357, 20350, 20332, 20322.75, 20298, 20286,
+     20265, 20254, 20233, 20221.5, 20188.25, 20180.25, 20140, 20125.25, 20102, 20063,
+     20059, 20033.5, 20015.75, 19997.75, 19978.75, 19955.25, 19928.25, 19911.25, 19874, 19856.25,
+     19831.25, 19794.75, 19763.75, 19712.25, 19700.25, 19643, 19610, 19595, 19570, 19520,
+     19490, 19465, 19400, 19306.75, 19275, 19240.75, 19209.5, 19193.25, 19104.25, 19070,
+     19019.25, 19000.75, 18960, 18940, 18890, 18830, 18800, 18721.25, 18681.5, 18650,
+     18630, 18613.75, 18601.75, 18578, 18556, 18519, 18475.25, 18450, 18445, 18402.25,
+     18195.75, 18161.25, 18088.5)
+
+// ===== Core Functions =====
+getReferencePrice() =>
+    switch priceReference
+        'High' => high
+        'Low' => low
+        'HL2' => hl2
+        => close
+
+findCurrentSegment(float refPrice) =>
+    currentSegment = -1
+    for i = 1 to array.size(segmentBoundaries) - 1
+        upperBound = array.get(segmentBoundaries, i - 1)
+        lowerBound = array.get(segmentBoundaries, i)
+        if refPrice <= upperBound and refPrice > lowerBound
+            currentSegment := i - 1
+            break
+    currentSegment
+
+shouldShowPrice(float price, int currentSegment, float refPrice) =>
+    if currentSegment == -1
+        false
+    else
+        startSegment = math.max(0, currentSegment - segmentsAbove)
+        endSegment = math.min(array.size(segmentBoundaries) - 2, currentSegment + segmentsBelow)
+        
+        showPrice = false
+        for i = startSegment to endSegment
+            upperBound = array.get(segmentBoundaries, i)
+            lowerBound = array.get(segmentBoundaries, i + 1)
+            if price <= upperBound and price > lowerBound
+                showPrice := true
+                break
+        showPrice
+
+// ===== Drawing Management =====
+var line[] priceLines = array.new_line()
+var label[] priceLabels = array.new_label()
+
+cleanupPriceLevels() =>
+    if array.size(priceLines) > 0
+        for i = 0 to array.size(priceLines) - 1
+            line.delete(array.get(priceLines, i))
+        array.clear(priceLines)
+    
+    if array.size(priceLabels) > 0
+        for i = 0 to array.size(priceLabels) - 1
+            label.delete(array.get(priceLabels, i))
+        array.clear(priceLabels)
+
+drawPriceLevel(float price, float refPrice, int currentSegment) =>
+    if barstate.islast and shouldShowPrice(price, currentSegment, refPrice)
+        text_position_x = bar_index + textXOffsetBars
+        text_position_y = price + textYOffsetPrice
+        
+        newLine = line.new(bar_index + lineOffset, price, bar_index + lineOffset + lineLength, price, 
+                 color=lineColor, style=lineStyle, width=lineThickness)
+        array.push(priceLines, newLine)
+        
+        newLabel = label.new(x=text_position_x, y=text_position_y, text=str.tostring(price), 
+                  textcolor=lineColor, style=label.style_none, size=textSize, xloc=xloc.bar_index)
+        array.push(priceLabels, newLabel)
+
+// ===== Daily High/Low Implementation =====
+var line dailyHighLine = na
+var line dailyLowLine = na
+var label dailyHighLabel = na
+var label dailyLowLabel = na
+
+var float dailyHigh = na
+var float dailyLow = na
+var int dailyBarsCount = 0
+
+isNewDay = ta.change(time("D")) != 0
+
+if isNewDay
+    dailyHigh := high
+    dailyLow := low
+    dailyBarsCount := 1
+    
+    if not na(dailyHighLine)
+        line.delete(dailyHighLine)
+    if not na(dailyLowLine)
+        line.delete(dailyLowLine)
+    if not na(dailyHighLabel)
+        label.delete(dailyHighLabel)
+    if not na(dailyLowLabel)
+        label.delete(dailyLowLabel)
+    
+    if showDailyLevels
+        dailyHighLine := line.new(bar_index, dailyHigh, bar_index + 1, dailyHigh, 
+                 color=dailyHighColor, style=dailyLineStyleConverted, width=dailyLineThickness)
+        dailyHighLabel := label.new(bar_index, dailyHigh, "DH: " + str.tostring(dailyHigh), 
+                  color=dailyHighColor, style=label.style_label_left, textcolor=color.white, size=textSize)
+        
+        dailyLowLine := line.new(bar_index, dailyLow, bar_index + 1, dailyLow, 
+                 color=dailyLowColor, style=dailyLineStyleConverted, width=dailyLineThickness)
+        dailyLowLabel := label.new(bar_index, dailyLow, "DL: " + str.tostring(dailyLow), 
+                  color=dailyLowColor, style=label.style_label_left, textcolor=color.white, size=textSize)
+else
+    if high > dailyHigh
+        dailyHigh := high
+        if not na(dailyHighLine)
+            line.set_xy1(dailyHighLine, bar_index - dailyBarsCount, dailyHigh)
+            line.set_xy2(dailyHighLine, bar_index, dailyHigh)
+        if not na(dailyHighLabel)
+            label.set_xy(dailyHighLabel, bar_index, dailyHigh)
+            label.set_text(dailyHighLabel, "DH: " + str.tostring(dailyHigh))
+    
+    if low < dailyLow
+        dailyLow := low
+        if not na(dailyLowLine)
+            line.set_xy1(dailyLowLine, bar_index - dailyBarsCount, dailyLow)
+            line.set_xy2(dailyLowLine, bar_index, dailyLow)
+        if not na(dailyLowLabel)
+            label.set_xy(dailyLowLabel, bar_index, dailyLow)
+            label.set_text(dailyLowLabel, "DL: " + str.tostring(dailyLow))
+    
+    dailyBarsCount += 1
+
+    if not na(dailyHighLine)
+        line.set_xy2(dailyHighLine, bar_index, dailyHigh)
+    if not na(dailyLowLine)
+        line.set_xy2(dailyLowLine, bar_index, dailyLow)
+
+// ===== Alert System =====
+checkPriceNearLevel(float price, float level) =>
+    math.abs(price - level) <= alertPriceTolerance
+
+priceLevelAlert = false
+dailyHighAlert = false
+dailyLowAlert = false
+bothConditionsAlert = false
+currentLevel = 0.0
+
+if alertOnPriceLevels and array.size(prices) > 0
+    for i = 0 to array.size(prices) - 1
+        currentPrice = array.get(prices, i)
+        if checkPriceNearLevel(close, currentPrice)
+            priceLevelAlert := true
+            currentLevel := currentPrice
+            break
+
+if alertOnDailyLevels and not na(dailyHigh) and not na(dailyLow)
+    if checkPriceNearLevel(close, dailyHigh)
+        dailyHighAlert := true
+    if checkPriceNearLevel(close, dailyLow)
+        dailyLowAlert := true
+
+if alertOnBothConditions and priceLevelAlert and (dailyHighAlert or dailyLowAlert)
+    bothConditionsAlert := true
+
+alertcondition(priceLevelAlert, "Price Level Reached", "Price reached a predefined level")
+alertcondition(dailyHighAlert, "Daily High Reached", "Price reached daily high")
+alertcondition(dailyLowAlert, "Daily Low Reached", "Price reached daily low")
+alertcondition(bothConditionsAlert, "Both Conditions Met", "Price reached both a level AND daily high/low")
+
+if (priceLevelAlert or dailyHighAlert or dailyLowAlert or bothConditionsAlert)
+    message = ""
+    
+    if bothConditionsAlert
+        message := "DOUBLE ALERT: Price reached level " + str.tostring(currentLevel) + " AND "
+        message += dailyHighAlert ? "Daily High: " + str.tostring(dailyHigh) : "Daily Low: " + str.tostring(dailyLow)
+    else
+        if priceLevelAlert
+            message := "Price reached level: " + str.tostring(currentLevel)
+        if dailyHighAlert
+            if message != ""
+                message += " and "
+            message += "Daily High: " + str.tostring(dailyHigh)
+        if dailyLowAlert
+            if message != ""
+                message += " and "
+            message += "Daily Low: " + str.tostring(dailyLow)
+    
+    alert(message, alert.freq_once_per_bar_close)
+
+// ===== Main Execution =====
+if barstate.islast
+    cleanupPriceLevels()
+    refPrice = getReferencePrice()
+    currentSegment = findCurrentSegment(refPrice + bufferPoints)
+    
+    if array.size(prices) > 0
+        for i = 0 to array.size(prices) - 1
+            drawPriceLevel(array.get(prices, i), refPrice, currentSegment)

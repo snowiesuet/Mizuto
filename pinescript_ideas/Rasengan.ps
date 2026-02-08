@@ -1,0 +1,244 @@
+//@version=5
+strategy(title="Range Filter Buy and Sell 5min [Strategy] - Modified Trailing with RSI Filter", overlay=true,initial_capital=10000,commission_type=strategy.commission.cash_per_contract,commission_value=1)
+
+// Session Settings
+useSessionFilter = input.bool(true, title="Enable Session Filter", group="Session Settings")
+sessionTime = input.session("1700-1500", title="Trading Times", group="Session Settings")
+
+// Function to check if current bar is within session
+InSession(sessionTimes) =>
+    not na(time(timeframe.period, sessionTimes))
+
+// Backtest date range inputs
+useDateFilter = input.bool(false, title="Filter Date Range of Backtest", group="Backtest Time Period")
+backtestStartDate = input.time(timestamp("1 Aug 2024"), title="Start Date", group="Backtest Time Period", tooltip="This start date is in the time zone of the exchange where the chart's instrument trades.")
+backtestEndDate = input.time(timestamp("30 Aug 2024"), title="End Date", group="Backtest Time Period", tooltip="This end date is in the time zone of the exchange where the chart's instrument trades.")
+
+// Determine if current bar is within the date range and session
+inDateRange = not useDateFilter or (time >= backtestStartDate and time < backtestEndDate)
+inSession = not useSessionFilter or InSession(sessionTime)
+inTradeWindow = inDateRange and inSession
+
+// === STRATEGY LOGIC ===
+sources = input.source(defval=close, title="Source")
+per = input.int(defval=50, minval=1, title="Sampling Period")
+mult = input.float(defval=10.0, minval=0.1, title="Range Multiplier")
+
+// Smooth Average Range Function
+smoothrng(x, t, m) =>
+    wper = (t * 2) - 1
+    avrng = ta.ema(math.abs(x - x[1]), t)
+    ta.ema(avrng, wper) * m
+
+smrng = smoothrng(sources, per, mult)
+
+// Range Filter Function
+rngfilt(x, r) =>
+    var float filt = na
+    filt := x > nz(filt[1]) ? (x - r < nz(filt[1]) ? nz(filt[1]) : (x - r)) : (x + r > nz(filt[1]) ? nz(filt[1]) : (x + r))
+    filt
+
+filt = rngfilt(sources, smrng)
+
+// ATR Calculation
+atr_length = input.int(14, title="ATR Length")
+atr_mult = input.float(1.0, title="ATR Multiplier")
+atr = ta.atr(atr_length)
+
+// ATR Bands
+upper_band_atr = filt + atr * atr_mult
+lower_band_atr = filt - atr * atr_mult
+plot(upper_band_atr, color=color.green, title="Upper ATR Band")
+plot(lower_band_atr, color=color.red, title="Lower ATR Band")
+
+// === VOLATILITY PROTECTION SETTINGS ===
+useVolatilityShockExit = input.bool(true, title="Use Volatility Shock Exit", group="Volatility Protection")
+shock_loss_atr_multiplier = input.float(2.5, title="Shock Loss ATR Multiplier", minval=0.1, group="Volatility Protection")
+shock_body_atr_multiplier = input.float(1.2, title="Shock Candle Body ATR Multiplier", minval=0.1, group="Volatility Protection")
+
+// === PROFIT PROTECTION SETTINGS ===
+enforceMinProfitBeforeExit = input.bool(true, title="Require Minimum Profit Before Trailing Exit", group="Profit Protection")
+min_profit_pips = input.float(50.0, title="Minimum Profit (pips)", minval=0.0, group="Profit Protection")
+pip_value = input.float(0.25, title="Pip Size (price units)", minval=0.0001, group="Profit Protection", tooltip="Convert pips to instrument price units; e.g. 0.25 for NQ (1 tick = 0.25)")
+
+// === RSI FILTER SETTINGS ===
+// Add RSI calculation
+rsi_length = input.int(14, title="RSI Length", group="RSI Filter")
+rsi_overbought = input.int(70, title="RSI Overbought Level", group="RSI Filter")
+rsi_oversold = input.int(30, title="RSI Oversold Level", group="RSI Filter")
+useRsiFilter = input.bool(true, title="Use RSI Filter", group="RSI Filter")
+
+rsi_value = ta.rsi(close, rsi_length)
+
+// === MACD COLOR FILTER SETTINGS ===
+useMacdFilter = input.bool(true, title="Use MACD Color Filter", group="MACD Filter")
+macd_fast = input.int(12, title="MACD Fast Length", group="MACD Filter")
+macd_slow = input.int(26, title="MACD Slow Length", group="MACD Filter") 
+macd_signal = input.int(9, title="MACD Signal Smoothing", group="MACD Filter")
+
+// Calculate MACD components
+[macd_line, signal_line, macd_histogram] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+
+// MACD color conditions
+macd_bullish = macd_histogram > 0  // Green histogram (above zero line)
+macd_bearish = macd_histogram < 0  // Red histogram (below zero line)
+
+// MACD filter conditions for trade entry
+valid_macd_for_long = not (useMacdFilter and macd_bearish)   // Allow longs unless MACD is bearish and filter is enabled
+valid_macd_for_short = not (useMacdFilter and macd_bullish) // Allow shorts unless MACD is bullish and filter is enabled
+
+// RSI conditions - avoid trading when RSI is extreme
+rsi_overbought_condition = rsi_value > rsi_overbought or rsi_value[1] > rsi_overbought
+rsi_oversold_condition = rsi_value < rsi_oversold or rsi_value[1] < rsi_oversold
+valid_rsi_condition = not (useRsiFilter and (rsi_overbought_condition or rsi_oversold_condition))
+
+// === CONFIRMATION SETTINGS ===
+lookback_bars = input.int(8, title="Confirmation Lookback Bars")
+min_confirmation = input.int(2, title="Minimum Confirmation Count", minval=1, maxval=4)
+
+// Track bars that close above upper band and below lower band
+var above_upper_band = array.new_bool(lookback_bars, false)
+var below_lower_band = array.new_bool(lookback_bars, false)
+
+array.shift(above_upper_band)
+array.push(above_upper_band, close > upper_band_atr)
+
+array.shift(below_lower_band)
+array.push(below_lower_band, close < lower_band_atr)
+
+// Count confirmations
+count_above_upper = 0
+count_below_lower = 0
+for i = 0 to lookback_bars - 1
+    if array.get(above_upper_band, i)
+        count_above_upper := count_above_upper + 1
+    if array.get(below_lower_band, i)
+        count_below_lower := count_below_lower + 1
+
+// Calculate average lengths of confirmation bars
+var upper_bar_lengths = array.new_float(lookback_bars, 0.0)
+var lower_bar_lengths = array.new_float(lookback_bars, 0.0)
+
+current_bar_length = high - low
+if close > upper_band_atr
+    array.shift(upper_bar_lengths)
+    array.push(upper_bar_lengths, current_bar_length)
+else if close < lower_band_atr
+    array.shift(lower_bar_lengths)
+    array.push(lower_bar_lengths, current_bar_length)
+else
+    array.shift(upper_bar_lengths)
+    array.push(upper_bar_lengths, 0.0)
+    array.shift(lower_bar_lengths)
+    array.push(lower_bar_lengths, 0.0)
+
+sum_upper_lengths = 0.0
+sum_lower_lengths = 0.0
+for i = 0 to lookback_bars - 1
+    sum_upper_lengths := sum_upper_lengths + array.get(upper_bar_lengths, i)
+    sum_lower_lengths := sum_lower_lengths + array.get(lower_bar_lengths, i)
+    
+avg_upper_bar_length = count_above_upper > 0 ? sum_upper_lengths / count_above_upper : 0.0
+avg_lower_bar_length = count_below_lower > 0 ? sum_lower_lengths / count_below_lower : 0.0
+
+// === NEW CONFIRMATION LOGIC WITH RSI AND MACD FILTERS ===
+// Only confirm if band conditions are met AND RSI is not extreme AND MACD color is favorable
+
+// longCondition  = (close > upper_band_atr) 
+// shortCondition = (close < lower_band_atr)
+
+longCondition = (close > upper_band_atr) and valid_rsi_condition and (count_above_upper >= min_confirmation) and valid_macd_for_long
+shortCondition = (close < lower_band_atr) and valid_rsi_condition and (count_below_lower >= min_confirmation) and valid_macd_for_short
+
+// === DYNAMIC TRAILING STOP LOSS ===
+useDynamicTrailingSL = input.bool(true, title="Use Dynamic Trailing SL")
+trail_length = input.int(10, title="Trailing ATR Lookback")
+trail_multiplier = input.float(3, title="Trailing Stop Multiplier")
+avg_trailing_atr = ta.sma(atr, trail_length)
+dynamic_trail_points = useDynamicTrailingSL ? (avg_trailing_atr * trail_multiplier) : (atr * atr_mult)
+
+// === REGULAR STOP LOSS ===
+useRegularStop = input.bool(true, title="Use Regular Stop Loss")
+fallback_bar_size = ta.sma(high - low, lookback_bars)
+long_stop_distance = avg_upper_bar_length > 0 ? avg_upper_bar_length : fallback_bar_size
+short_stop_distance = avg_lower_bar_length > 0 ? avg_lower_bar_length : fallback_bar_size
+
+// === MINIMUM PROFIT CALCULATIONS ===
+min_profit_points = min_profit_pips * pip_value
+long_profit_points = strategy.position_size > 0 ? close - strategy.position_avg_price : 0.0
+short_profit_points = strategy.position_size < 0 ? strategy.position_avg_price - close : 0.0
+long_reached_min_profit = not enforceMinProfitBeforeExit or (strategy.position_size > 0 and long_profit_points >= min_profit_points)
+short_reached_min_profit = not enforceMinProfitBeforeExit or (strategy.position_size < 0 and short_profit_points >= min_profit_points)
+long_exit_allowed = not enforceMinProfitBeforeExit or long_profit_points >= min_profit_points or long_profit_points <= 0
+short_exit_allowed = not enforceMinProfitBeforeExit or short_profit_points >= min_profit_points or short_profit_points <= 0
+
+// === VOLATILITY SHOCK CALCULATIONS ===
+candle_body = math.abs(close - open)
+volatility_shock_candle_bear = candle_body >= atr * shock_body_atr_multiplier and close < open
+volatility_shock_candle_bull = candle_body >= atr * shock_body_atr_multiplier and close > open
+
+long_unrealized_loss = strategy.position_size > 0 ? strategy.position_avg_price - close : 0.0
+short_unrealized_loss = strategy.position_size < 0 ? close - strategy.position_avg_price : 0.0
+
+long_shock_loss = strategy.position_size > 0 and long_unrealized_loss >= atr * shock_loss_atr_multiplier
+short_shock_loss = strategy.position_size < 0 and short_unrealized_loss >= atr * shock_loss_atr_multiplier
+
+// === TRADE TRACKING ===
+var int longEntryBar = na
+var int shortEntryBar = na
+
+// Update entry bars when new positions are opened
+if (longCondition and inTradeWindow and strategy.position_size <= 0)
+    strategy.entry("Long", strategy.long)
+    longEntryBar := bar_index
+    
+if (shortCondition and inTradeWindow and strategy.position_size >= 0)
+    strategy.entry("Short", strategy.short)
+    shortEntryBar := bar_index
+
+if not inTradeWindow or not inDateRange
+    // Close all trades if outside the session or date range
+    strategy.close_all(comment="Exit due to session/date range")
+
+// Apply exits only when allowed by minimum profit logic
+strategy.exit(
+    "Long Stop Loss",
+    from_entry="Long",
+    stop=strategy.position_avg_price - long_stop_distance * 2,
+    when=strategy.position_size > 0 and useRegularStop and bar_index > longEntryBar and long_exit_allowed
+)
+
+strategy.exit(
+    "Short Stop Loss",
+    from_entry="Short",
+    stop=strategy.position_avg_price + short_stop_distance * 2,
+    when=strategy.position_size < 0 and useRegularStop and bar_index > shortEntryBar and short_exit_allowed
+)
+
+strategy.exit(
+    "Long Dynamic SL",
+    from_entry="Long",
+    trail_points=dynamic_trail_points,
+    trail_offset=dynamic_trail_points,
+    when=strategy.position_size > 0 and useDynamicTrailingSL and bar_index > longEntryBar and long_reached_min_profit
+)
+
+strategy.exit(
+    "Short Dynamic SL",
+    from_entry="Short",
+    trail_points=dynamic_trail_points,
+    trail_offset=dynamic_trail_points,
+    when=strategy.position_size < 0 and useDynamicTrailingSL and bar_index > shortEntryBar and short_reached_min_profit
+)
+
+// === VOLATILITY SHOCK EXIT ===
+if (useVolatilityShockExit and strategy.position_size > 0 and not na(longEntryBar) and bar_index > longEntryBar and (long_shock_loss or volatility_shock_candle_bear))
+    strategy.close("Long", comment="Long Volatility Shock")
+
+if (useVolatilityShockExit and strategy.position_size < 0 and not na(shortEntryBar) and bar_index > shortEntryBar and (short_shock_loss or volatility_shock_candle_bull))
+    strategy.close("Short", comment="Short Volatility Shock")
+
+// === MACD HISTOGRAM VISUALIZATION ===
+// Plot MACD histogram with color coding
+plot(macd_histogram, title="MACD Histogram", style=plot.style_columns, color=macd_histogram >= 0 ? color.green : color.red, display=display.pane)
+

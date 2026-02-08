@@ -1,7 +1,7 @@
 import time
 import logging
-from bot_logic import TradingBot
-from utils import configure_logging
+from src.bot import TradingBot
+from src.utils import configure_logging
 
 def main():
     """
