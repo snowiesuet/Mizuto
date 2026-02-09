@@ -17,7 +17,7 @@ from src.optimize import optimize_strategy_fast
 def make_ohlc_df(n_bars=100, start_price=100.0, seed=42):
     """Generate a synthetic OHLC DataFrame with capitalized columns (yfinance format)."""
     np.random.seed(seed)
-    dates = pd.bdate_range(start="2023-01-01", periods=n_bars)
+    dates = pd.bdate_range(start="2025-01-01", periods=n_bars)
     close = start_price + np.cumsum(np.random.randn(n_bars) * 2)
     close = np.maximum(close, 10.0)
     high = close + np.abs(np.random.randn(n_bars)) * 1.5

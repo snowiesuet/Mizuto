@@ -13,12 +13,12 @@ The goal of this phase is to build the basic scaffolding for the bot and impleme
   - [x] Set up a version control system like Git.
   - [x] Choose an IDE (like VS Code).
 
-- [ ] **Step 1.2: Create a Basic Trading Bot Structure**
-  - [ ] Create separate modules for the bot logic, exchange interactions, and utilities.
-  - [ ] Implement placeholder functions for fetching prices and placing orders.
+- [x] **Step 1.2: Create a Basic Trading Bot Structure**
+  - [x] Create separate modules for the bot logic, exchange interactions, and utilities.
+  - [x] Implement placeholder functions for fetching prices and placing orders.
 
-- [ ] **Step 1.3: Implement a Simple Trading Strategy**
-  - [ ] Code a basic strategy, such as a moving average crossover or a simple price threshold system (like the one in `trading_bot_template.py`).
+- [x] **Step 1.3: Implement a Simple Trading Strategy**
+  - [x] Code a basic strategy, such as a moving average crossover or a simple price threshold system (like the one in `trading_bot_template.py`).
 
 ---
 
@@ -26,21 +26,21 @@ The goal of this phase is to build the basic scaffolding for the bot and impleme
 
 This phase focuses on testing the simple strategy against historical data to gauge its viability.
 
-- [ ] **Step 2.1: Acquire Historical Market Data**
-  - [ ] Use a library like `yfinance` or `ccxt` to download historical price data (OHLCV - Open, High, Low, Close, Volume).
-  - [ ] Store the data in a consistent format (e.g., CSV or a database).
+- [x] **Step 2.1: Acquire Historical Market Data**
+  - [x] Use a library like `yfinance` or `ccxt` to download historical price data (OHLCV - Open, High, Low, Close, Volume).
+  - [x] Store the data in a consistent format (e.g., CSV or a database).
 
-- [ ] **Step 2.2: Develop a Backtesting Engine**
-  - [ ] Create a script (`backtest.py`) that iterates through the historical data point-by-point.
-  - [ ] Simulate the execution of your strategy, tracking a virtual portfolio (cash, assets, PnL).
-  - [ ] Log every simulated trade (entry/exit price, timestamp, amount).
+- [x] **Step 2.2: Develop a Backtesting Engine**
+  - [x] Create a script (`backtest.py`) that iterates through the historical data point-by-point.
+  - [x] Simulate the execution of your strategy, tracking a virtual portfolio (cash, assets, PnL).
+  - [x] Log every simulated trade (entry/exit price, timestamp, amount).
 
-- [ ] **Step 2.3: Analyze Backtest Results**
-  - [ ] Calculate key performance metrics:
-    - [ ] Total Profit/Loss (PnL)
-    - [ ] Win/Loss Ratio
-    - [ ] Sharpe Ratio (risk-adjusted return)
-    - [ ] Maximum Drawdown (largest peak-to-trough decline)
+- [x] **Step 2.3: Analyze Backtest Results**
+  - [x] Calculate key performance metrics:
+    - [x] Total Profit/Loss (PnL)
+    - [x] Win/Loss Ratio
+    - [x] Sharpe Ratio (risk-adjusted return)
+    - [x] Maximum Drawdown (largest peak-to-trough decline)
 
 ---
 

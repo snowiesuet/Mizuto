@@ -9,3 +9,6 @@ venv/
 
 # Claude Code
 .claude/
+configs.env
+
+data/*

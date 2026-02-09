@@ -32,6 +32,7 @@ from tqdm import tqdm
 
 from tests.bar_permute import get_permutation
 from src.backtest import run_backtest_on_data
+from src.data_loader import load_nq
 from src.optimize import optimize_strategy_fast
 
 
@@ -266,6 +267,12 @@ def main():
                         help='Train/test split ratio for walk-forward (default: 0.7)')
     parser.add_argument('--save-plots', action='store_true',
                         help='Save plots to files instead of showing')
+    parser.add_argument('--nq', action='store_true',
+                        help='Use local NQ futures data instead of yfinance')
+    parser.add_argument('--timeframe', default='1d', choices=['1d', '1h', '5m'],
+                        help='NQ data timeframe (default: 1d, only used with --nq)')
+    parser.add_argument('--years', nargs='+', type=int, default=None,
+                        help='NQ year filter (e.g. --years 2023 2024, only used with --nq)')
 
     args = parser.parse_args()
 
@@ -275,15 +282,24 @@ def main():
     print("=" * 60)
     print("MIZUTO - Monte Carlo Permutation Testing")
     print("=" * 60)
-    print(f"Symbol: {args.symbol}")
-    print(f"Period: {args.start} to {args.end}")
+
+    # Load data from local NQ CSVs or yfinance
+    if args.nq:
+        symbol = f"NQ-{args.timeframe}"
+        data = load_nq(timeframe=args.timeframe, years=args.years)
+        year_str = f" years={args.years}" if args.years else " all years"
+        print(f"Source: Local NQ data ({args.timeframe},{year_str})")
+        print(f"Period: {data.index[0]} to {data.index[-1]}")
+    else:
+        symbol = args.symbol
+        data = fetch_data(args.symbol, args.start, args.end)
+        print(f"Symbol: {args.symbol}")
+        print(f"Period: {args.start} to {args.end}")
+
     print(f"Permutations: {args.permutations}")
     print(f"Metric: {args.metric}")
+    print(f"Loaded {len(data)} bars of data")
     print()
-
-    # Fetch data once
-    data = fetch_data(args.symbol, args.start, args.end)
-    print(f"Fetched {len(data)} bars of data\n")
 
     # --- In-sample MCPT ---
     print("-" * 40)
@@ -309,7 +325,7 @@ def main():
         insample_results['real_metric'],
         insample_results['permuted_metrics'],
         insample_results['p_value'],
-        title=f"In-Sample MCPT: {args.symbol}",
+        title=f"In-Sample MCPT: {symbol}",
         metric_name=args.metric.replace('_', ' ').title(),
         save_path=save_path,
     )
@@ -341,7 +357,7 @@ def main():
             wf_results['real_oos_metric'],
             wf_results['permuted_oos_metrics'],
             wf_results['p_value'],
-            title=f"Walk-Forward MCPT: {args.symbol}",
+            title=f"Walk-Forward MCPT: {symbol}",
             metric_name=args.metric.replace('_', ' ').title(),
             save_path=save_path,
         )

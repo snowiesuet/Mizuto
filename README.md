@@ -18,11 +18,11 @@ The goal of this phase is to build the basic scaffolding for the bot and impleme
   - [x] Choose an IDE (like VS Code).
 
 - [x] **Step 1.2: Create a Basic Trading Bot Structure**
-  - [ ] Create separate modules for the bot logic, exchange interactions, and utilities.
-  - [ ] Implement placeholder functions for fetching prices and placing orders.
+  - [x] Create separate modules for the bot logic, exchange interactions, and utilities.
+  - [x] Implement placeholder functions for fetching prices and placing orders.
 
-- [ ] **Step 1.3: Implement a Simple Trading Strategy**
-  - [ ] Code a basic strategy, such as a moving average crossover or a simple price threshold system (like the one in `trading_bot_template.py`).
+- [x] **Step 1.3: Implement a Simple Trading Strategy**
+  - [x] Code a basic strategy, such as a moving average crossover or a simple price threshold system (like the one in `trading_bot_template.py`).
 
 ---
 
@@ -32,7 +32,7 @@ This phase focuses on testing the simple strategy against historical data to gau
 
 - [x] **Step 2.1: Acquire Historical Market Data**
   - [x] Use a library like `yfinance` or `ccxt` to download historical price data (OHLCV - Open, High, Low, Close, Volume).
-  - [ ] Store the data in a consistent format (e.g., CSV or a database).
+  - [x] Store the data in a consistent format (e.g., CSV or a database).
 
 - [x] **Step 2.2: Develop a Backtesting Engine**
   - [x] Create a script (`backtest.py`) that iterates through the historical data point-by-point.
