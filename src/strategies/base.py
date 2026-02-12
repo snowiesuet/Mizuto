@@ -1,10 +1,15 @@
 from abc import ABC, abstractmethod
 
+import pandas as pd
+
 
 class BaseStrategy(ABC):
     """Abstract base class for trading strategies.
 
     Subclasses must implement `on_price` and `reset`, and set a `name` attribute.
+
+    Strategies that need OHLCV bars (not just close prices) should override
+    `on_bar`, `load_ohlcv_history`, and set `requires_ohlcv = True`.
     """
 
     @property
@@ -22,7 +27,7 @@ class BaseStrategy(ABC):
             has_position: Whether the bot currently holds a position.
 
         Returns:
-            One of ``'buy'``, ``'sell'``, or ``'hold'``.
+            One of ``'buy'``, ``'sell'``, ``'short'``, or ``'hold'``.
         """
         ...
 
@@ -31,6 +36,27 @@ class BaseStrategy(ABC):
         """Reset internal state so the strategy can be re-used for another run."""
         ...
 
+    @property
+    def requires_ohlcv(self) -> bool:
+        """Whether this strategy needs full OHLCV bars instead of just close prices."""
+        return False
+
+    def on_bar(self, bar: dict, has_position: bool, position_type: str = None) -> str:
+        """Process a full OHLCV bar and return a signal.
+
+        The default implementation delegates to ``on_price(bar['Close'], has_position)``.
+        Strategies that need OHLCV data should override this method.
+
+        Args:
+            bar: Dict with keys 'Open', 'High', 'Low', 'Close', 'Volume'.
+            has_position: Whether the bot currently holds a position.
+            position_type: ``'long'``, ``'short'``, or ``None``.
+
+        Returns:
+            One of ``'buy'``, ``'sell'``, ``'short'``, or ``'hold'``.
+        """
+        return self.on_price(bar['Close'], has_position)
+
     def load_price_history(self, prices: list[float]) -> None:
         """Optionally seed the strategy with historical prices.
 
@@ -38,3 +64,12 @@ class BaseStrategy(ABC):
         context (e.g. moving-average based) should override this.
         """
         pass
+
+    def load_ohlcv_history(self, df: pd.DataFrame) -> None:
+        """Optionally seed the strategy with historical OHLCV data.
+
+        The default implementation extracts the Close column and calls
+        ``load_price_history``.  OHLCV strategies should override this.
+        """
+        if 'Close' in df.columns:
+            self.load_price_history(df['Close'].dropna().values.flatten().tolist())

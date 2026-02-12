@@ -30,7 +30,7 @@ import pandas as pd
 import yfinance as yf
 from tqdm import tqdm
 
-from tests.bar_permute import get_permutation
+from src.bar_permute import get_permutation
 from src.backtest import run_backtest_on_data
 from src.data_loader import load_nq
 from src.optimize import optimize_strategy_fast

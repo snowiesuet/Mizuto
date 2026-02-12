@@ -5,7 +5,7 @@ Tests for Monte Carlo Permutation Testing components.
 import pytest
 import numpy as np
 import pandas as pd
-from tests.bar_permute import get_permutation
+from src.bar_permute import get_permutation
 from src.backtest import run_backtest_on_data
 from src.optimize import optimize_strategy_fast
 

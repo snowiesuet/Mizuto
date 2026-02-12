@@ -9,6 +9,11 @@ Usage:
 
 import argparse
 import logging
+import sys
+import os
+
+# Ensure project root is on sys.path when running as a script
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.data_loader import load_nq
 from src.backtest import run_backtest_on_data

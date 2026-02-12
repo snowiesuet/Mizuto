@@ -8,12 +8,14 @@ from src.utils import configure_logging
 def run_backtest_on_data(data, symbol="SYN", trade_amount=1.0,
                          short_window=SHORT_WINDOW, long_window=LONG_WINDOW,
                          trailing_stop_pct=None, stop_loss_pct=None,
-                         slippage_pct=0.001, commission_pct=0.001, quiet=False):
+                         slippage_pct=0.001, commission_pct=0.001, quiet=False,
+                         strategy=None):
     """
     Run a backtest on a provided DataFrame (no yfinance download).
 
     Args:
         data: DataFrame with at least a 'Close' column, indexed by date.
+              OHLCV strategies require 'Open', 'High', 'Low', 'Close' columns.
         symbol: Symbol name (for logging only).
         trade_amount: Units per trade.
         short_window: Short MA window.
@@ -23,6 +25,7 @@ def run_backtest_on_data(data, symbol="SYN", trade_amount=1.0,
         slippage_pct: Slippage fraction per trade.
         commission_pct: Commission fraction per trade.
         quiet: If True, suppress logging output (useful for batch runs).
+        strategy: A BaseStrategy instance (default None = MACrossover).
 
     Returns:
         Dict with keys: 'pnl', 'profit_factor', 'total_commission',
@@ -39,6 +42,7 @@ def run_backtest_on_data(data, symbol="SYN", trade_amount=1.0,
         return _run_backtest_on_data_inner(
             data, symbol, trade_amount, short_window, long_window,
             trailing_stop_pct, stop_loss_pct, slippage_pct, commission_pct,
+            strategy=strategy,
         )
     finally:
         if quiet and prev_level is not None:
@@ -46,7 +50,8 @@ def run_backtest_on_data(data, symbol="SYN", trade_amount=1.0,
 
 
 def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_window,
-                                trailing_stop_pct, stop_loss_pct, slippage_pct, commission_pct):
+                                trailing_stop_pct, stop_loss_pct, slippage_pct, commission_pct,
+                                strategy=None):
     """Inner implementation — separated so quiet-mode logging restore always runs."""
 
     if data.empty:
@@ -56,35 +61,76 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
     # --- Initialization ---
     bot = TradingBot(symbol, trade_amount,
                      short_window=short_window, long_window=long_window,
-                     trailing_stop_pct=trailing_stop_pct, stop_loss_pct=stop_loss_pct)
+                     trailing_stop_pct=trailing_stop_pct, stop_loss_pct=stop_loss_pct,
+                     strategy=strategy)
 
-    initial_history_data = data.head(long_window)
+    uses_ohlcv = bot.strategy.requires_ohlcv
+
+    # Validate OHLCV columns when strategy requires them
+    if uses_ohlcv:
+        required_cols = {'Open', 'High', 'Low', 'Close'}
+        missing = required_cols - set(data.columns)
+        if missing:
+            logging.error(f"Strategy requires OHLCV data but columns missing: {missing}")
+            return None
+
+    # Dynamic warmup period
+    warmup = getattr(bot.strategy, 'warmup_period', long_window)
+    warmup = max(warmup, long_window) if not uses_ohlcv else warmup
+
+    initial_history_data = data.head(warmup)
     bot.load_historical_data(data=initial_history_data)
 
-    simulation_data = data.iloc[long_window:]
+    simulation_data = data.iloc[warmup:]
 
     # --- Backtesting Simulation ---
     trades = []
 
     for index, row in simulation_data.iterrows():
         current_price = float(row['Close'])
-        signal = bot._run_strategy_logic(current_price)
+
+        # Dispatch to bar-based or price-based logic
+        if uses_ohlcv:
+            bar = {
+                'Open': float(row['Open']),
+                'High': float(row['High']),
+                'Low': float(row['Low']),
+                'Close': current_price,
+                'Volume': float(row['Volume']) if 'Volume' in row.index else 0,
+            }
+            signal = bot._run_strategy_logic_bar(bar)
+        else:
+            signal = bot._run_strategy_logic(current_price)
 
         if signal == 'buy' and not bot.has_position:
             fill_price = current_price * (1 + slippage_pct)
             bot.has_position = True
-            bot._handle_position_entry(fill_price)
+            bot._handle_position_entry(fill_price, position_type='long')
             trades.append({'date': index.date() if hasattr(index, 'date') else index,
                            'type': 'buy', 'price': fill_price})
             logging.info(f"Simulating BUY at {fill_price:.2f} (market {current_price:.2f}) on {index}")
 
+        elif signal == 'short' and not bot.has_position:
+            fill_price = current_price * (1 - slippage_pct)  # slippage unfavorable for short entry
+            bot.has_position = True
+            bot._handle_position_entry(fill_price, position_type='short')
+            trades.append({'date': index.date() if hasattr(index, 'date') else index,
+                           'type': 'short', 'price': fill_price})
+            logging.info(f"Simulating SHORT at {fill_price:.2f} (market {current_price:.2f}) on {index}")
+
         elif signal == 'sell' and bot.has_position:
-            fill_price = current_price * (1 - slippage_pct)
+            # Slippage direction depends on position type
+            if bot.position_type == 'short':
+                fill_price = current_price * (1 + slippage_pct)  # unfavorable for short exit (buying back)
+            else:
+                fill_price = current_price * (1 - slippage_pct)  # unfavorable for long exit (selling)
+            closing_position_type = bot.position_type
             bot.has_position = False
             bot._handle_position_exit()
             trades.append({'date': index.date() if hasattr(index, 'date') else index,
-                           'type': 'sell', 'price': fill_price})
-            logging.info(f"Simulating SELL at {fill_price:.2f} (market {current_price:.2f}) on {index}")
+                           'type': 'sell', 'price': fill_price,
+                           'closed_position': closing_position_type})
+            logging.info(f"Simulating SELL ({closing_position_type}) at {fill_price:.2f} (market {current_price:.2f}) on {index}")
 
     logging.info("Backtest simulation finished.")
 
@@ -99,20 +145,29 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
     losses = 0
     gross_profits = 0.0
     gross_losses = 0.0
-    last_buy_price = 0
+    last_entry_price = 0
+    last_entry_type = None  # 'buy' or 'short'
     trade_count = 0
 
     for trade in trades:
         commission = trade['price'] * commission_pct
         total_commission += commission
 
-        if trade['type'] == 'buy':
-            if last_buy_price == 0:
-                last_buy_price = trade['price']
-        elif trade['type'] == 'sell' and last_buy_price > 0:
-            buy_commission = last_buy_price * commission_pct
-            sell_commission = trade['price'] * commission_pct
-            profit = trade['price'] - last_buy_price - buy_commission - sell_commission
+        if trade['type'] in ('buy', 'short'):
+            if last_entry_price == 0:
+                last_entry_price = trade['price']
+                last_entry_type = trade['type']
+        elif trade['type'] == 'sell' and last_entry_price > 0:
+            entry_commission = last_entry_price * commission_pct
+            exit_commission = trade['price'] * commission_pct
+
+            if last_entry_type == 'short':
+                # Short PnL: entry_price - exit_price - commissions
+                profit = last_entry_price - trade['price'] - entry_commission - exit_commission
+            else:
+                # Long PnL: exit_price - entry_price - commissions
+                profit = trade['price'] - last_entry_price - entry_commission - exit_commission
+
             pnl += profit
             if profit > 0:
                 wins += 1
@@ -120,7 +175,8 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
             else:
                 losses += 1
                 gross_losses += abs(profit)
-            last_buy_price = 0
+            last_entry_price = 0
+            last_entry_type = None
             trade_count += 1
 
     profit_factor = gross_profits / gross_losses if gross_losses > 0 else float('inf')

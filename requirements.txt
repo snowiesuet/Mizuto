@@ -4,3 +4,5 @@ pytest
 numpy
 tqdm
 matplotlib
+backtesting
+ta

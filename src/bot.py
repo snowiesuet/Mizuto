@@ -17,6 +17,7 @@ class TradingBot:
         self.short_window = short_window
         self.long_window = long_window
         self.has_position = False  # Tracks if we currently hold the asset
+        self.position_type = None  # 'long', 'short', or None
 
         # Strategy (defaults to MA Crossover for backward compatibility)
         if strategy is not None:
@@ -50,6 +51,11 @@ class TradingBot:
 
         if data.empty:
             logging.warning("No valid historical data provided or retrieved. Starting with an empty price history.")
+            return
+
+        # OHLCV strategies get the full DataFrame
+        if self.strategy.requires_ohlcv:
+            self.strategy.load_ohlcv_history(data)
             return
 
         if 'Close' in data.columns:
@@ -94,16 +100,63 @@ class TradingBot:
         # --- Delegate signal generation to the strategy ---
         return self.strategy.on_price(current_price, self.has_position)
 
-    def _handle_position_entry(self, entry_price):
+    def _run_strategy_logic_bar(self, bar: dict):
+        """Core logic for strategies that need full OHLCV bars.
+
+        Performs bot-level stop-loss checks (supporting both long and short
+        positions) then delegates to ``strategy.on_bar()``.
+        """
+        current_price = float(bar['Close'])
+
+        # --- Bot-level trailing stop-loss ---
+        if self.has_position and self.trailing_stop_pct is not None:
+            if self.position_type == 'short':
+                # For shorts, track lowest price and stop triggers on rise
+                if self.highest_price is None or current_price < self.highest_price:
+                    self.highest_price = current_price
+                    self.stop_loss_price = self.highest_price * (1 + self.trailing_stop_pct)
+                if current_price >= self.stop_loss_price:
+                    logging.info(f"Trailing stop-loss triggered (short)! Price {current_price:.2f} >= Stop {self.stop_loss_price:.2f}")
+                    return 'sell'
+            else:
+                # Long position (original behavior)
+                if self.highest_price is None or current_price > self.highest_price:
+                    self.highest_price = current_price
+                    self.stop_loss_price = self.highest_price * (1 - self.trailing_stop_pct)
+                if current_price <= self.stop_loss_price:
+                    logging.info(f"Trailing stop-loss triggered! Price {current_price:.2f} <= Stop {self.stop_loss_price:.2f}")
+                    return 'sell'
+
+        # --- Bot-level fixed stop-loss ---
+        if self.has_position and self.stop_loss_pct is not None and self.entry_price is not None:
+            if self.position_type == 'short':
+                fixed_stop_price = self.entry_price * (1 + self.stop_loss_pct)
+                if current_price >= fixed_stop_price:
+                    logging.info(f"Fixed stop-loss triggered (short)! Price {current_price:.2f} >= Stop {fixed_stop_price:.2f}")
+                    return 'sell'
+            else:
+                fixed_stop_price = self.entry_price * (1 - self.stop_loss_pct)
+                if current_price <= fixed_stop_price:
+                    logging.info(f"Fixed stop-loss triggered! Price {current_price:.2f} <= Stop {fixed_stop_price:.2f}")
+                    return 'sell'
+
+        # --- Delegate to strategy ---
+        return self.strategy.on_bar(bar, self.has_position, self.position_type)
+
+    def _handle_position_entry(self, entry_price, position_type='long'):
         """
         Updates position tracking variables when entering a position.
-        Call this method after a successful buy order.
+        Call this method after a successful buy or short order.
         """
         self.entry_price = float(entry_price)
         self.highest_price = float(entry_price)
+        self.position_type = position_type
         if self.trailing_stop_pct is not None:
-            self.stop_loss_price = self.entry_price * (1 - self.trailing_stop_pct)
-        logging.info(f"Position entered at {self.entry_price:.2f}")
+            if position_type == 'short':
+                self.stop_loss_price = self.entry_price * (1 + self.trailing_stop_pct)
+            else:
+                self.stop_loss_price = self.entry_price * (1 - self.trailing_stop_pct)
+        logging.info(f"Position entered at {self.entry_price:.2f} ({position_type})")
 
     def _handle_position_exit(self):
         """
@@ -113,6 +166,7 @@ class TradingBot:
         self.entry_price = None
         self.highest_price = None
         self.stop_loss_price = None
+        self.position_type = None
         logging.info("Position exited - stop-loss tracking reset")
 
     def run_strategy(self):

@@ -1,139 +1,78 @@
-# Mizuto – mizu (水, fluidity) + to (ト, trade), smooth and adaptive
+# Mizuto
+
+*mizu (水, fluidity) + to (ト, trade) — smooth and adaptive*
 
 <img width="300" height="300" alt="mizuto" src="https://github.com/user-attachments/assets/6e340722-2c82-41c6-9b05-3c618b16c308" />
 
-## Algorithmic Trading Bot Development Roadmap
+A Python algorithmic trading bot supporting live (simulated) trading and historical backtesting. Features pluggable strategies (MA crossover, ATR breakout, pivot points), trailing/fixed stop-loss, long and short positions, and Monte Carlo permutation testing for strategy validation.
 
-This roadmap outlines the key phases and steps to build, test, and deploy an algorithmic trading bot that uses a predictive model.
+Currently in **Phase 2** (backtesting complete). See [roadmap.md](roadmap.md) for the full development plan.
 
----
+## Setup
 
-### Phase 1: Foundation & Simple Strategy
+```bash
+python -m venv venv
+venv\Scripts\activate   # Windows
+pip install -r requirements.txt
+```
 
-The goal of this phase is to build the basic scaffolding for the bot and implement a simple, rule-based strategy.
+## Usage
 
-- [x] **Step 1.1: Setup Development Environment**
-  - [x] Install Python and necessary libraries (`pandas`, `numpy`).
-  - [x] Set up a version control system like Git.
-  - [x] Choose an IDE (like VS Code).
+```bash
+# Live trading bot (simulated exchange, polls every 60s)
+python main.py
 
-- [x] **Step 1.2: Create a Basic Trading Bot Structure**
-  - [x] Create separate modules for the bot logic, exchange interactions, and utilities.
-  - [x] Implement placeholder functions for fetching prices and placing orders.
+# Custom backtest (BTC-USD, configurable in src/backtest.py __main__ block)
+python -m src.backtest
 
-- [x] **Step 1.3: Implement a Simple Trading Strategy**
-  - [x] Code a basic strategy, such as a moving average crossover or a simple price threshold system (like the one in `trading_bot_template.py`).
+# backtesting.py strategies
+python -m bt --strategy ma_crossover --symbol BTC-USD --start 2023-01-01 --end 2023-12-31
+python -m bt --strategy atr_breakout --optimize
+python -m bt --strategy pivot_points --plot
 
----
+# MCPT validation
+python scripts/mcpt_validation.py
+python scripts/mcpt_validation.py --symbol BTC-USD --walkforward --save-plots
 
-### Phase 2: Historical Backtesting
+# NQ futures backtest
+python scripts/backtest_nq.py --timeframe 1d --years 2023 2024
 
-This phase focuses on testing the simple strategy against historical data to gauge its viability.
+# Run tests
+pytest tests/
+```
 
-- [x] **Step 2.1: Acquire Historical Market Data**
-  - [x] Use a library like `yfinance` or `ccxt` to download historical price data (OHLCV - Open, High, Low, Close, Volume).
-  - [x] Store the data in a consistent format (e.g., CSV or a database).
+## Project Structure
 
-- [x] **Step 2.2: Develop a Backtesting Engine**
-  - [x] Create a script (`backtest.py`) that iterates through the historical data point-by-point.
-  - [x] Simulate the execution of your strategy, tracking a virtual portfolio (cash, assets, PnL).
-  - [x] Log every simulated trade (entry/exit price, timestamp, amount).
+```
+src/                  # Core library
+├── bot.py               # TradingBot (decision engine, stop-loss, position tracking)
+├── backtest.py           # Historical backtesting via yfinance
+├── bar_permute.py        # OHLCV bar permutation for MCPT
+├── indicators.py         # ATR, ADX, pivots, rolling max/min
+├── optimize.py           # Grid search over MA / stop-loss params
+├── exchange.py           # Simulated exchange (fetch_price / place_order)
+├── data_loader.py        # NQ futures CSV loader
+├── utils.py              # configure_logging helper
+└── strategies/           # Pluggable strategy classes
+    ├── base.py              # BaseStrategy ABC
+    ├── ma_crossover.py      # MACrossoverStrategy
+    ├── atr_breakout.py      # ATRBreakoutStrategy
+    └── pivot_points.py      # PivotPointStrategy
 
-- [x] **Step 2.3: Analyze Backtest Results**
-  - [x] Calculate key performance metrics:
-    - [x] Total Profit/Loss (PnL)
-    - [x] Win/Loss Ratio
-    - [x] Sharpe Ratio (risk-adjusted return)
-    - [x] Maximum Drawdown (largest peak-to-trough decline)
+bt/                   # backtesting.py framework
+├── runner.py            # CLI runner, run_bt(), optimize_bt()
+├── helpers.py           # Indicator functions (sma, atr, adx, pivots)
+└── strategies/          # backtesting.py Strategy subclasses
 
----
+scripts/              # Standalone CLI tools
+├── mcpt_validation.py   # Monte Carlo permutation testing
+├── backtest_nq.py       # NQ futures backtest
+├── trailing_stop_demo.py
+└── log_yfinance_data.py
 
-### Phase 3: Building the Predictive Model
+tests/                # pytest tests
+```
 
-Here, you will build a machine learning model to forecast future price movements.
+## License
 
-- [ ] **Step 3.1: Feature Engineering**
-  - [ ] From your historical data, create features that the model can learn from. Examples include:
-    - [ ] Technical indicators (RSI, MACD, Bollinger Bands)
-    - [ ] Lagged price values
-    - [ ] Volatility measures
-
-- [ ] **Step 3.2: Choose and Train a Model**
-  - [ ] Select an appropriate ML model (e.g., LSTM for time-series, XGBoost for tabular data, Facebook Prophet).
-  - [ ] Split your data into training and testing sets.
-  - [ ] Train the model on the training data to predict a target (e.g., the price in the next period, or whether the price will go up or down).
-
-- [ ] **Step 3.3: Evaluate Model Performance**
-  - [ ] Test the trained model on the unseen testing data.
-  - [ ] Evaluate its accuracy using metrics like Mean Squared Error (MSE), Mean Absolute Error (MAE), or a classification confusion matrix.
-
----
-
-### Phase 4: Integrated Backtesting with Predictive Model
-
-Combine the predictive model with the backtesting engine to see if its forecasts improve the strategy's performance.
-
-- [ ] **Step 4.1: Modify the Backtesting Engine**
-  - [ ] Integrate the trained model into your backtester. The backtester should feed historical data to the model to generate a prediction for the *next* time step.
-
-- [ ] **Step 4.2: Refine the Trading Strategy**
-  - [ ] Modify your strategy logic to use the model's predictions as a primary signal.
-  - [ ] Example: "If the model predicts the price will rise by >1% AND the RSI is not overbought, then buy."
-
-- [ ] **Step 4.3: Run and Analyze the Predictive Backtest**
-  - [ ] Run the new, prediction-driven strategy against your historical data.
-  - [ ] Compare the performance metrics against the results from the simple strategy in Phase 2. Did the model add value?
-
----
-
-### Phase 5: Paper Trading (Forward Testing)
-
-Before risking real money, test the bot in a live, simulated environment.
-
-- [ ] **Step 5.1: Connect to a Broker/Exchange API**
-  - [ ] Choose an exchange that offers a paper trading (or "sandbox") environment.
-  - [ ] Write the code to connect to the exchange's API, replacing your placeholder functions.
-
-- [ ] **Step 5.2: Adapt Bot for Live Data**
-  - [ ] Modify your bot to handle a live stream of data (websockets) or poll for new data at regular intervals.
-  - [ ] Ensure your model can generate predictions in real-time.
-
-- [ ] **Step 5.3: Run and Monitor**
-  - [ ] Run the bot in the paper trading environment for an extended period (weeks or months).
-  - [ ] Compare its performance to the backtest results. The real world often presents unexpected challenges (slippage, API latency).
-
----
-
-### Phase 6: Live Deployment (Use Extreme Caution)
-
-This is the final step where the bot trades with real capital.
-
-- [ ] **Step 6.1: Set Up a Secure Production Environment**
-  - [ ] Deploy the bot on a reliable server or cloud service (e.g., AWS, GCP, DigitalOcean) to ensure it runs 24/7.
-  - [ ] Secure your API keys and credentials.
-
-- [ ] **Step 6.2: Implement Robust Risk Management**
-  - [ ] Code hard limits into your bot:
-    - [ ] **Position Sizing:** Never risk more than a small percentage of your capital on a single trade.
-    - [ ] **Stop-Loss:** Automatically exit a trade if it loses a certain amount.
-    - [ ] **Kill Switch:** A way to manually or automatically shut down all trading activity.
-
-- [ ] **Step 6.3: Go Live with Minimal Capital**
-  - [ ] Start with the smallest amount of capital you are willing to lose.
-  - [ ] Monitor its performance closely.
-
----
-
-### Phase 7: Continuous Improvement
-
-A trading bot is never "finished." The market is always changing.
-
-- [ ] **Step 7.1: Ongoing Monitoring and Logging**
-  - [ ] Keep detailed logs of all trades, decisions, and errors.
-  - [ ] Set up alerts for unexpected behavior.
-
-- [ ] **Step 7.2: Regular Model Retraining**
-  - [ ] Periodically retrain your predictive model with new market data to prevent "model drift."
-
-- [ ] **Step 7.3: Strategy Refinement**
-  - [ ] Use the data from live trading and paper trading to continuously analyze and refine your strategy.
+See repository for license details.
