@@ -1,8 +1,43 @@
 import logging
+
+import numpy as np
 import pandas as pd
 import yfinance as yf
+
 from src.bot import TradingBot, LONG_WINDOW, SHORT_WINDOW
 from src.utils import configure_logging
+
+
+def _validate_ohlc_structure(data):
+    """Warn on OHLC bars where High/Low don't bracket Open/Close.
+
+    Does NOT reject data — some real data sources have minor violations.
+    Returns the count of invalid bars for testing.
+    """
+    if not {'Open', 'High', 'Low', 'Close'}.issubset(data.columns):
+        return 0
+
+    high = data['High'].values
+    low = data['Low'].values
+    open_ = data['Open'].values
+    close = data['Close'].values
+
+    bar_max = np.maximum(open_, close)
+    bar_min = np.minimum(open_, close)
+
+    n_high = int(np.sum(high < bar_max))
+    n_low = int(np.sum(low > bar_min))
+
+    if n_high > 0:
+        logging.warning(
+            f"OHLC validation: {n_high} bar(s) have High < max(Open, Close)"
+        )
+    if n_low > 0:
+        logging.warning(
+            f"OHLC validation: {n_low} bar(s) have Low > min(Open, Close)"
+        )
+
+    return n_high + n_low
 
 
 def run_backtest_on_data(data, symbol="SYN", trade_amount=1.0,
@@ -109,6 +144,14 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
 
     uses_ohlcv = bot.strategy.requires_ohlcv
 
+    # Validate fill model compatibility with strategy
+    if fill_model not in bot.strategy.supported_fill_models:
+        logging.warning(
+            f"Strategy '{bot.strategy.name}' does not declare support for "
+            f"fill_model='{fill_model}'. Supported: {bot.strategy.supported_fill_models}. "
+            f"Proceeding anyway."
+        )
+
     # Validate OHLCV columns when strategy requires them
     if uses_ohlcv:
         required_cols = {'Open', 'High', 'Low', 'Close'}
@@ -117,14 +160,17 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
             logging.error(f"Strategy requires OHLCV data but columns missing: {missing}")
             return None
 
+    # Validate OHLC structure (warn-only, never rejects data)
+    if {'Open', 'High', 'Low', 'Close'}.issubset(data.columns):
+        _validate_ohlc_structure(data)
+
     # Validate fill model requirements
     if fill_model == 'next_open' and 'Open' not in data.columns:
         logging.error("fill_model='next_open' requires 'Open' column in data.")
         return None
 
-    # Dynamic warmup period
-    warmup = getattr(bot.strategy, 'warmup_period', long_window)
-    warmup = max(warmup, long_window) if not uses_ohlcv else warmup
+    # Dynamic warmup period — always enforce minimum of long_window
+    warmup = max(bot.strategy.warmup_period, long_window)
 
     initial_history_data = data.head(warmup)
     bot.load_historical_data(data=initial_history_data)
@@ -135,8 +181,6 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
     cash = initial_capital
     equity_curve = []
     equity_dates = []
-    position_entry_price_tracker = 0.0
-    position_type_tracker = None  # 'long' or 'short'
 
     # Pre-compute median volume for vwap_slippage model
     median_volume = None
@@ -161,8 +205,6 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                 fill_price = _compute_fill_price(open_price, 'buy', slippage_pct, fill_model)
                 bot.has_position = True
                 bot._handle_position_entry(fill_price, position_type='long')
-                position_entry_price_tracker = fill_price
-                position_type_tracker = 'long'
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
                                'type': 'buy', 'price': fill_price})
                 logging.info(f"Simulating BUY at {fill_price:.2f} (open {open_price:.2f}) on {index}")
@@ -171,8 +213,6 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                 fill_price = _compute_fill_price(open_price, 'short', slippage_pct, fill_model)
                 bot.has_position = True
                 bot._handle_position_entry(fill_price, position_type='short')
-                position_entry_price_tracker = fill_price
-                position_type_tracker = 'short'
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
                                'type': 'short', 'price': fill_price})
                 logging.info(f"Simulating SHORT at {fill_price:.2f} (open {open_price:.2f}) on {index}")
@@ -181,24 +221,36 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                 sig_type = 'sell_short' if bot.position_type == 'short' else 'sell_long'
                 fill_price = _compute_fill_price(open_price, sig_type, slippage_pct, fill_model)
                 closing_position_type = bot.position_type
+                closing_entry_price = bot.entry_price
                 bot.has_position = False
                 bot._handle_position_exit()
                 # Update cash with realized PnL
-                if position_type_tracker == 'long':
-                    realized = (fill_price - position_entry_price_tracker) * trade_amount
-                elif position_type_tracker == 'short':
-                    realized = (position_entry_price_tracker - fill_price) * trade_amount
+                if closing_position_type == 'long':
+                    realized = (fill_price - closing_entry_price) * trade_amount
+                elif closing_position_type == 'short':
+                    realized = (closing_entry_price - fill_price) * trade_amount
                 else:
                     realized = 0.0
-                entry_comm = position_entry_price_tracker * commission_pct
+                entry_comm = closing_entry_price * commission_pct
                 exit_comm = fill_price * commission_pct
                 cash += realized - entry_comm - exit_comm
-                position_entry_price_tracker = 0.0
-                position_type_tracker = None
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
                                'type': 'sell', 'price': fill_price,
                                'closed_position': closing_position_type})
                 logging.info(f"Simulating SELL ({closing_position_type}) at {fill_price:.2f} (open {open_price:.2f}) on {index}")
+
+            else:
+                # Signal could not be executed — log the drop
+                if pending_sig in ('buy', 'short') and bot.has_position:
+                    logging.warning(
+                        f"Dropped pending '{pending_sig}' signal on {index}: "
+                        f"already in {bot.position_type} position"
+                    )
+                elif pending_sig == 'sell' and not bot.has_position:
+                    logging.warning(
+                        f"Dropped pending 'sell' signal on {index}: "
+                        f"no open position"
+                    )
 
         # --- Generate signal for current bar ---
         # Build bar dict for fill model (volume-based slippage) even if strategy is price-only
@@ -230,8 +282,6 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                                                   fill_model, bar=bar, median_volume=median_volume)
                 bot.has_position = True
                 bot._handle_position_entry(fill_price, position_type='long')
-                position_entry_price_tracker = fill_price
-                position_type_tracker = 'long'
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
                                'type': 'buy', 'price': fill_price})
                 logging.info(f"Simulating BUY at {fill_price:.2f} (market {current_price:.2f}) on {index}")
@@ -241,8 +291,6 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                                                   fill_model, bar=bar, median_volume=median_volume)
                 bot.has_position = True
                 bot._handle_position_entry(fill_price, position_type='short')
-                position_entry_price_tracker = fill_price
-                position_type_tracker = 'short'
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
                                'type': 'short', 'price': fill_price})
                 logging.info(f"Simulating SHORT at {fill_price:.2f} (market {current_price:.2f}) on {index}")
@@ -252,31 +300,30 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                 fill_price = _compute_fill_price(current_price, sig_type, slippage_pct,
                                                   fill_model, bar=bar, median_volume=median_volume)
                 closing_position_type = bot.position_type
+                closing_entry_price = bot.entry_price
                 bot.has_position = False
                 bot._handle_position_exit()
                 # Update cash with realized PnL
-                if position_type_tracker == 'long':
-                    realized = (fill_price - position_entry_price_tracker) * trade_amount
-                elif position_type_tracker == 'short':
-                    realized = (position_entry_price_tracker - fill_price) * trade_amount
+                if closing_position_type == 'long':
+                    realized = (fill_price - closing_entry_price) * trade_amount
+                elif closing_position_type == 'short':
+                    realized = (closing_entry_price - fill_price) * trade_amount
                 else:
                     realized = 0.0
-                entry_comm = position_entry_price_tracker * commission_pct
+                entry_comm = closing_entry_price * commission_pct
                 exit_comm = fill_price * commission_pct
                 cash += realized - entry_comm - exit_comm
-                position_entry_price_tracker = 0.0
-                position_type_tracker = None
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
                                'type': 'sell', 'price': fill_price,
                                'closed_position': closing_position_type})
                 logging.info(f"Simulating SELL ({closing_position_type}) at {fill_price:.2f} (market {current_price:.2f}) on {index}")
 
         # --- Track equity (mark-to-market) ---
-        if position_type_tracker == 'long':
-            unrealized = (current_price - position_entry_price_tracker) * trade_amount
+        if bot.position_type == 'long':
+            unrealized = (current_price - bot.entry_price) * trade_amount
             portfolio_value = cash + unrealized
-        elif position_type_tracker == 'short':
-            unrealized = (position_entry_price_tracker - current_price) * trade_amount
+        elif bot.position_type == 'short':
+            unrealized = (bot.entry_price - current_price) * trade_amount
             portfolio_value = cash + unrealized
         else:
             portfolio_value = cash
@@ -285,6 +332,38 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
         equity_dates.append(index)
 
     logging.info("Backtest simulation finished.")
+
+    # --- Force-close any open position at end of backtest ---
+    if bot.has_position and bot.entry_price is not None and len(simulation_data) > 0:
+        last_price = float(simulation_data.iloc[-1]['Close'])
+        last_date = simulation_data.index[-1]
+        closing_position_type = bot.position_type
+        closing_entry_price = bot.entry_price
+
+        if closing_position_type == 'long':
+            realized = (last_price - closing_entry_price) * trade_amount
+        elif closing_position_type == 'short':
+            realized = (closing_entry_price - last_price) * trade_amount
+        else:
+            realized = 0.0
+
+        entry_comm = closing_entry_price * commission_pct
+        exit_comm = last_price * commission_pct
+        cash += realized - entry_comm - exit_comm
+
+        bot.has_position = False
+        bot._handle_position_exit()
+
+        trades.append({
+            'date': last_date.date() if hasattr(last_date, 'date') else last_date,
+            'type': 'sell',
+            'price': last_price,
+            'closed_position': closing_position_type,
+        })
+        logging.info(
+            f"Force-closed {closing_position_type} position at {last_price:.2f} "
+            f"(end of backtest)"
+        )
 
     # --- Analyze Results ---
     if not trades:
@@ -331,7 +410,7 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
             last_entry_type = None
             trade_count += 1
 
-    profit_factor = gross_profits / gross_losses if gross_losses > 0 else float('inf')
+    profit_factor = gross_profits / gross_losses if gross_losses > 0 else 999.99
 
     logging.info("--- Backtest Results ---")
     logging.info(f"Total PnL (after costs): {pnl:.2f}")

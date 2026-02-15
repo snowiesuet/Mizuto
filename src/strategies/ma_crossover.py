@@ -23,6 +23,11 @@ class MACrossoverStrategy(BaseStrategy):
         self.long_window = long_window
         self.price_history: list[float] = []
 
+    @property
+    def warmup_period(self) -> int:
+        """Minimum bars needed before the strategy can produce signals."""
+        return self.long_window
+
     # --- BaseStrategy interface ---------------------------------------------------
 
     def on_price(self, price: float, has_position: bool) -> str:

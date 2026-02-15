@@ -97,17 +97,10 @@ class TestProfitFactor:
         data = pd.DataFrame({'Close': prices}, index=dates)
 
         result = run_backtest_on_data(data, slippage_pct=0.0, commission_pct=0.0, quiet=True)
-        if result is not None and result['trade_count'] > 0:
-            assert 'profit_factor' in result
-            assert result['profit_factor'] >= 0
-
-    def test_no_trades_returns_none(self):
-        """Flat data producing no trades should return None."""
-        prices = [100.0] * 50
-        dates = pd.bdate_range(start="2023-01-01", periods=50)
-        data = pd.DataFrame({'Close': prices}, index=dates)
-        result = run_backtest_on_data(data, quiet=True)
-        assert result is None
+        assert result is not None
+        assert result['trade_count'] > 0
+        assert 'profit_factor' in result
+        assert result['profit_factor'] >= 0
 
     def test_gross_profits_and_losses_tracked(self):
         """Results should include gross_profits and gross_losses."""
@@ -119,9 +112,9 @@ class TestProfitFactor:
         data = pd.DataFrame({'Close': prices}, index=dates)
 
         result = run_backtest_on_data(data, slippage_pct=0.0, commission_pct=0.0, quiet=True)
-        if result is not None:
-            assert 'gross_profits' in result
-            assert 'gross_losses' in result
+        assert result is not None
+        assert 'gross_profits' in result
+        assert 'gross_losses' in result
 
 
 # ---------------------------------------------------------------------------

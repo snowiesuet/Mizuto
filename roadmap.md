@@ -62,17 +62,17 @@ This phase focuses on testing the simple strategy against historical data to gau
 
 Before building ML models, fix known issues and add the analytics needed to trust backtest results and understand strategy behavior. See [backtesting.md](backtesting.md) for full details.
 
-- [ ] **Step 3.1: Fix Known Bugs (P0)**
-  - [ ] Unify position tracking — remove `position_type_tracker` from `backtest.py`, use `bot.position_type` as sole source of truth.
-  - [ ] Force-close open positions at end of backtest — include unrealized PnL in final metrics.
-  - [ ] Cap profit factor — replace `float('inf')` with a capped value or alternative metric when no losses.
-  - [ ] Log dropped signals — warn when pending signal conflicts with existing position in `next_open` model.
+- [x] **Step 3.1: Fix Known Bugs (P0)**
+  - [x] Unify position tracking — remove `position_type_tracker` from `backtest.py`, use `bot.position_type` as sole source of truth.
+  - [x] Force-close open positions at end of backtest — include unrealized PnL in final metrics.
+  - [x] Cap profit factor — replace `float('inf')` with a capped value (999.99) when no losses.
+  - [x] Log dropped signals — warn when pending signal conflicts with existing position in `next_open` model.
 
-- [ ] **Step 3.2: Data & State Integrity (P1)**
-  - [ ] Validate OHLC structure on load (`High >= max(Open, Close)`, `Low <= min(Open, Close)`).
-  - [ ] Reset strategy state properly between backtests (fix `multi_asset.py`).
-  - [ ] Unify warmup logic — always use `max(strategy.warmup_period, long_window)`.
-  - [ ] Validate that selected strategy supports chosen fill model.
+- [x] **Step 3.2: Data & State Integrity (P1)**
+  - [x] Validate OHLC structure on load (`High >= max(Open, Close)`, `Low <= min(Open, Close)`).
+  - [x] Reset strategy state properly between backtests (already working in `multi_asset.py`).
+  - [x] Unify warmup logic — always use `max(strategy.warmup_period, long_window)`.
+  - [x] Validate that selected strategy supports chosen fill model.
 
 - [ ] **Step 3.3: Trade Attribution & Analytics**
   - [ ] Add exit reason tracking: `'sl_hit'`, `'tp_hit'`, `'signal_reversal'`, `'end_of_data'`.

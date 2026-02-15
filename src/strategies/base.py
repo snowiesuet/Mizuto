@@ -41,6 +41,23 @@ class BaseStrategy(ABC):
         """Whether this strategy needs full OHLCV bars instead of just close prices."""
         return False
 
+    @property
+    def warmup_period(self) -> int:
+        """Minimum bars needed before the strategy can produce meaningful signals.
+
+        Subclasses should override this to reflect their indicator requirements.
+        """
+        return 0
+
+    @property
+    def supported_fill_models(self) -> tuple[str, ...]:
+        """Fill models this strategy supports.
+
+        The backtest engine warns (but does not block) if the chosen fill model
+        is not in this tuple.  Override to restrict.
+        """
+        return ('close', 'next_open', 'vwap_slippage')
+
     def on_bar(self, bar: dict, has_position: bool, position_type: str = None) -> str:
         """Process a full OHLCV bar and return a signal.
 

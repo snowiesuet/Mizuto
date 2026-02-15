@@ -67,8 +67,8 @@ def optimize_strategy(
             metric_val = 0.0
         else:
             metric_val = result.get(metric, 0.0)
-            # Treat infinite profit factor (no losses) as 0 for comparison
-            if metric_val == float('inf'):
+            # Treat capped profit factor (no losses) as 0 for comparison
+            if metric_val >= 999.99:
                 metric_val = 0.0
 
         if metric_val > best_metric:
@@ -207,7 +207,7 @@ def walk_forward_optimize(
     test_metric_val = 0.0
     if test_result is not None:
         test_metric_val = test_result.get(metric, 0.0)
-        if test_metric_val == float('inf'):
+        if test_metric_val >= 999.99:
             test_metric_val = 0.0
 
     # Compute overfit ratio

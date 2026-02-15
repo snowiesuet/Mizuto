@@ -152,31 +152,24 @@ class TestMetricsIntegration:
             data, short_window=5, long_window=20,
             slippage_pct=0.0, commission_pct=0.0, quiet=True,
         )
-        if result is not None:
-            assert 'equity_curve' in result
-            assert 'sharpe_ratio' in result
-            assert 'max_drawdown_pct' in result
-            assert 'bh_return_pct' in result
-            assert len(result['equity_curve']) > 0
+        assert result is not None
+        assert 'equity_curve' in result
+        assert 'sharpe_ratio' in result
+        assert 'max_drawdown_pct' in result
+        assert 'bh_return_pct' in result
+        assert len(result['equity_curve']) > 0
 
     def test_equity_curve_starts_at_initial_capital(self):
-        data = make_flat_ohlcv(n=100, price=100.0)
+        data = make_ohlcv(n=200, volatility=5.0, trend=1.0, seed=42)
         result = run_backtest_on_data(
             data, short_window=5, long_window=20,
             slippage_pct=0.0, commission_pct=0.0, quiet=True,
             initial_capital=25000.0,
         )
-        # Flat data = no trades = None result, but let's test with trending data
-        data2 = make_ohlcv(n=200, volatility=5.0, trend=1.0, seed=42)
-        result2 = run_backtest_on_data(
-            data2, short_window=5, long_window=20,
-            slippage_pct=0.0, commission_pct=0.0, quiet=True,
-            initial_capital=25000.0,
-        )
-        if result2 is not None:
-            assert result2['initial_capital'] == 25000.0
-            # First equity value should be initial_capital (no trade on first bar typically)
-            assert result2['equity_curve'][0] == pytest.approx(25000.0, rel=0.1)
+        assert result is not None
+        assert result['initial_capital'] == 25000.0
+        # First equity value should be initial_capital (no trade on first bar typically)
+        assert result['equity_curve'][0] == pytest.approx(25000.0, rel=0.1)
 
     def test_equity_curve_ends_near_pnl(self):
         data = make_ohlcv(n=200, volatility=5.0, trend=1.0, seed=42)
@@ -186,9 +179,10 @@ class TestMetricsIntegration:
             slippage_pct=0.0, commission_pct=0.0, quiet=True,
             initial_capital=capital,
         )
-        if result is not None and result['trade_count'] > 0:
-            # If no open position at end, equity should be close to initial + pnl
-            final_equity = result['equity_curve'][-1]
-            expected = capital + result['pnl']
-            # Allow some tolerance for open positions
-            assert final_equity == pytest.approx(expected, rel=0.15)
+        assert result is not None
+        assert result['trade_count'] > 0
+        # Equity should be close to initial + pnl
+        final_equity = result['equity_curve'][-1]
+        expected = capital + result['pnl']
+        # Allow some tolerance for open positions
+        assert final_equity == pytest.approx(expected, rel=0.15)

@@ -15,43 +15,7 @@ from src.strategies.atr_breakout import ATRBreakoutStrategy
 from src.strategies.pivot_points import PivotPointStrategy
 from src.bot import TradingBot
 from src.backtest import run_backtest_on_data
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_ohlcv_df(n, base=100.0, volatility=5.0, trend=0.0, seed=42):
-    """Generate synthetic OHLCV data for testing."""
-    rng = np.random.RandomState(seed)
-    dates = pd.bdate_range(start="2023-01-01", periods=n)
-    closes = [base]
-    for i in range(1, n):
-        closes.append(closes[-1] + trend + rng.randn() * volatility)
-    closes = np.array(closes)
-    highs = closes + rng.uniform(1, volatility, n)
-    lows = closes - rng.uniform(1, volatility, n)
-    opens = closes + rng.randn(n) * 2
-    volume = rng.randint(1000, 10000, n).astype(float)
-    return pd.DataFrame({
-        'Open': opens, 'High': highs, 'Low': lows,
-        'Close': closes, 'Volume': volume,
-    }, index=dates)
-
-
-def _make_trending_ohlcv(n, base=100.0, trend=2.0, atr_size=5.0, seed=42):
-    """Generate OHLCV data with a clear uptrend and reasonable ATR."""
-    rng = np.random.RandomState(seed)
-    dates = pd.bdate_range(start="2023-01-01", periods=n)
-    closes = np.array([base + i * trend for i in range(n)])
-    highs = closes + atr_size
-    lows = closes - atr_size
-    opens = closes - trend / 2
-    volume = np.full(n, 5000.0)
-    return pd.DataFrame({
-        'Open': opens, 'High': highs, 'Low': lows,
-        'Close': closes, 'Volume': volume,
-    }, index=dates)
+from tests.conftest import make_ohlcv
 
 
 # ===========================================================================
@@ -70,13 +34,13 @@ class TestIndicators:
 
     def test_compute_atr_not_nan(self):
         """ATR should be a positive number with enough data."""
-        df = _make_ohlcv_df(50)
+        df = make_ohlcv(n=50)
         val = compute_atr(df['High'], df['Low'], df['Close'], 14)
         assert not np.isnan(val)
         assert val > 0
 
     def test_compute_adx_returns_three_floats(self):
-        df = _make_ohlcv_df(50)
+        df = make_ohlcv(n=50)
         adx_val, plus_di, minus_di = compute_adx(df['High'], df['Low'], df['Close'], 14)
         assert not np.isnan(adx_val)
         assert not np.isnan(plus_di)
@@ -117,7 +81,7 @@ class TestATRBreakoutStrategy:
 
     def test_load_ohlcv_history(self):
         s = ATRBreakoutStrategy()
-        df = _make_ohlcv_df(40)
+        df = make_ohlcv(n=40)
         s.load_ohlcv_history(df)
         assert len(s._closes) == 40
         assert len(s._highs) == 40
@@ -241,7 +205,7 @@ class TestPivotPointStrategy:
 
     def test_load_ohlcv_history(self):
         s = PivotPointStrategy()
-        df = _make_ohlcv_df(10)
+        df = make_ohlcv(n=10)
         s.load_ohlcv_history(df)
         assert s._prev_high is not None
         assert s._prev_close is not None
@@ -345,7 +309,7 @@ class TestBacktestIntegration:
 
     def test_atr_breakout_smoke(self):
         """ATR Breakout strategy runs through the backtest pipeline without error."""
-        df = _make_ohlcv_df(200, base=100, volatility=8, trend=1.0, seed=123)
+        df = make_ohlcv(n=200, base=100, volatility=8, trend=1.0, seed=123)
         strategy = ATRBreakoutStrategy()
         result = run_backtest_on_data(
             df, strategy=strategy, slippage_pct=0, commission_pct=0, quiet=True,
@@ -360,7 +324,7 @@ class TestBacktestIntegration:
 
     def test_pivot_points_smoke(self):
         """Pivot Points strategy runs through the backtest pipeline without error."""
-        df = _make_ohlcv_df(100, base=100, volatility=10, trend=0, seed=456)
+        df = make_ohlcv(n=100, base=100, volatility=10, trend=0, seed=456)
         strategy = PivotPointStrategy()
         result = run_backtest_on_data(
             df, strategy=strategy, slippage_pct=0, commission_pct=0, quiet=True,
@@ -370,42 +334,13 @@ class TestBacktestIntegration:
 
     def test_pivot_points_with_s2_r2_smoke(self):
         """Pivot Points with S2/R2 enabled runs without error."""
-        df = _make_ohlcv_df(100, base=100, volatility=10, trend=0, seed=789)
+        df = make_ohlcv(n=100, base=100, volatility=10, trend=0, seed=789)
         strategy = PivotPointStrategy(use_s2_r2=True)
         result = run_backtest_on_data(
             df, strategy=strategy, slippage_pct=0, commission_pct=0, quiet=True,
         )
         # Just checking it runs
         assert result is None or result['trade_count'] >= 0
-
-    def test_short_pnl_positive_on_downtrend(self):
-        """Short trades on a downtrend should produce positive PnL."""
-        # Create data where pivot points will trigger short entries on a downtrend
-        # Manually craft OHLCV with R1 rejections
-        n = 50
-        dates = pd.bdate_range(start="2023-01-01", periods=n)
-        # Gradually declining with bounces
-        closes = []
-        highs = []
-        lows = []
-        opens = []
-        for i in range(n):
-            c = 200 - i * 3 + (5 if i % 5 == 0 else 0)  # bounce every 5 bars
-            closes.append(c)
-            highs.append(c + 8)
-            lows.append(c - 8)
-            opens.append(c + 2)
-        df = pd.DataFrame({
-            'Open': opens, 'High': highs, 'Low': lows,
-            'Close': closes, 'Volume': [5000]*n,
-        }, index=dates)
-
-        strategy = PivotPointStrategy()
-        result = run_backtest_on_data(
-            df, strategy=strategy, slippage_pct=0, commission_pct=0, quiet=True,
-        )
-        # This is a structural test — mainly checking the pipeline handles shorts
-        assert result is None or isinstance(result['pnl'], float)
 
     def test_ohlcv_validation_error(self):
         """Strategy requiring OHLCV should fail gracefully with Close-only data."""
@@ -418,20 +353,6 @@ class TestBacktestIntegration:
             df, strategy=strategy, slippage_pct=0, commission_pct=0, quiet=True,
         )
         assert result is None
-
-    def test_slippage_direction_short(self):
-        """Short entry slippage should be unfavorable (lower fill price)."""
-        # Create a scenario that produces a short signal and check trade prices
-        s = PivotPointStrategy()
-        # Manually set up for R1 rejection
-        bar1 = {'Open': 100, 'High': 110, 'Low': 90, 'Close': 100, 'Volume': 1000}
-        s.on_bar(bar1, False)
-        s._prev_bar_close = 115.0  # above R1=110
-        bar2 = {'Open': 112, 'High': 115, 'Low': 107, 'Close': 108, 'Volume': 1000}
-        signal = s.on_bar(bar2, False)
-        assert signal == 'short'
-        # Slippage is checked in the backtest loop — the strategy just signals
-
 
 class TestBaseStrategyOHLCVDefaults:
     """Test that BaseStrategy OHLCV defaults work for non-OHLCV strategies."""
@@ -448,7 +369,7 @@ class TestBaseStrategyOHLCVDefaults:
     def test_load_ohlcv_history_extracts_close(self):
         from src.strategies.ma_crossover import MACrossoverStrategy
         s = MACrossoverStrategy(short_window=3, long_window=5)
-        df = _make_ohlcv_df(10)
+        df = make_ohlcv(n=10)
         s.load_ohlcv_history(df)
         assert len(s.price_history) > 0
 

@@ -60,7 +60,7 @@ Built on the mature `backtesting` library. Provides fractional shares, built-in 
 | **Walk-forward analysis** | Train/test split with overfit ratio detection. Rolling windows too. |
 | **MCPT validation** | Bar permutation in log-space preserves single-bar statistics. |
 | **Comprehensive metrics** | 10+ metrics including risk-adjusted (Sharpe, Sortino, max drawdown). |
-| **Test coverage (~70%)** | Fill models, metrics, optimization, and edge cases well tested. |
+| **Test coverage (~70%)** | 167 tests across 12 files. Fill models, metrics, optimization, and edge cases well tested. |
 
 ### Code Quality: 7/10
 
@@ -126,10 +126,8 @@ Well-structured with clear separation of concerns. Strategy pattern is clean and
 **Risk**: State desynchronization — bot thinks one thing, backtest thinks another.
 **Fix**: Single source of truth. Backtest should read from bot, not track separately.
 
-#### 2. Open Positions Not Force-Closed at End of Backtest
-**Where**: `src/backtest.py` simulation loop ends without closing open positions.
-**Impact**: Last trade's PnL is lost. Equity curve doesn't reflect final unrealized P&L correctly.
-**Fix**: Add force-close logic after the simulation loop completes.
+#### ~~2. Open Positions Not Force-Closed at End of Backtest~~ (FIXED)
+Force-close logic added for both long and short positions. Tested in `test_open_position_is_force_closed`.
 
 #### 3. Strategy-Internal SL/TP Not Validated Against Bot State
 **Where**: ATR Breakout and Pivot strategies manage their own SL/TP.
@@ -138,13 +136,11 @@ Well-structured with clear separation of concerns. Strategy pattern is clean and
 
 ### Important (P1)
 
-#### 4. Profit Factor = Infinity Handled Inconsistently
-**Where**: `src/backtest.py:334` returns `float('inf')`, `src/optimize.py:71` treats inf as 0.
-**Fix**: Cap at a reasonable value (e.g., 999) or use a different metric when no losses exist.
+#### ~~4. Profit Factor = Infinity Handled Inconsistently~~ (FIXED)
+Capped at 999.99 when `gross_losses == 0`. Tested in `test_profit_factor_not_infinite`.
 
-#### 5. Pending Signal Lost on Conflict
-**Where**: `src/backtest.py` — if `next_open` model has a pending buy but `bot.has_position` is already True, the signal is silently dropped.
-**Fix**: Log a warning and/or handle the conflict explicitly.
+#### ~~5. Pending Signal Lost on Conflict~~ (FIXED)
+Warning now logged when pending signal conflicts with existing position ("Dropped pending" message).
 
 #### 6. Warmup Logic Inconsistent
 **Where**: `src/backtest.py:126-127` — OHLCV strategies use their own `warmup_period`, price-only strategies use `max(warmup, long_window)`.
@@ -172,7 +168,7 @@ Only counts consecutive bars below peak. Doesn't distinguish partial vs. full re
 |---------|---------------|
 | **Trade attribution** | Know *why* each trade exited (SL, TP, signal, time-based). Essential for strategy tuning. |
 | **Position sizing** | Always fixed `trade_amount`. Need Kelly criterion, volatility scaling, or risk-parity. |
-| **OHLC validation** | No check that High >= max(Open,Close) or Low <= min(Open,Close). Bad data = bad results. |
+| ~~**OHLC validation**~~ | **Done.** Warns on invalid bars. Note: `conftest.make_ohlcv` still produces invalid OHLC data — OHLCV strategies (ATR Breakout, Pivot) cannot reliably generate trades with it. |
 | **Intraday support** | `periods_per_year=252` hard-coded. Need configurable timeframes (1h, 15m, 5m). |
 | **Parameter sensitivity** | No analysis of how small param changes affect results. Fragile params = overfitting. |
 | **Regime detection** | No market regime identification. Strategy may work in trends but fail in chop. |
@@ -204,11 +200,12 @@ Only counts consecutive bars below peak. Doesn't distinguish partial vs. full re
 ### Phase 1: Bug Fixes & Hardening (Priority)
 
 - [ ] **Unify position tracking** — remove `position_type_tracker` from backtest.py, use `bot.position_type` as sole source of truth
-- [ ] **Force-close positions at backtest end** — add cleanup logic after simulation loop; include unrealized PnL in final metrics
-- [ ] **Cap profit factor** — replace `float('inf')` with capped value or alternative metric
-- [ ] **Validate OHLC structure** — add checks in data loading: `High >= max(Open, Close)`, `Low <= min(Open, Close)`
+- [x] **Force-close positions at backtest end** — long and short positions force-closed; tested
+- [x] **Cap profit factor** — capped at 999.99; tested
+- [x] **Validate OHLC structure** — warns on invalid bars at backtest start
 - [ ] **Reset strategy state between backtests** — ensure `multi_asset.py` always calls reset
-- [ ] **Log dropped signals** — warn when pending signal conflicts with existing position
+- [x] **Log dropped signals** — warns when pending signal conflicts with existing position
+- [ ] **Fix `conftest.make_ohlcv`** — helper produces invalid OHLC data (High < Close, Low > Close). OHLCV strategies can't generate trades with it.
 
 ### Phase 2: Trade Analytics & Attribution
 
@@ -244,25 +241,31 @@ Only counts consecutive bars below peak. Doesn't distinguish partial vs. full re
 
 ---
 
-## Test Coverage Gaps
+## Test Coverage
 
-### Currently Well Tested
-- Fill models (close, next_open, vwap_slippage)
+### Well Tested (167 tests, 12 files)
+- Fill models (close, next_open, vwap_slippage) — including model comparison tests
 - Slippage & commission math
-- Equity curve tracking
-- Bar permutation (MCPT)
-- All metric calculations
-- Optimization parameter validation
+- Equity curve tracking and initial capital
+- Bar permutation (MCPT) — shape, columns, reproducibility, positivity
+- All metric calculations (Sharpe, Sortino, CAGR, drawdown, buy-and-hold)
+- Optimization and walk-forward parameter validation
+- Force-close open positions at backtest end (long)
+- OHLC validation warnings on bad data
+- Cross-engine validation (src/ vs bt/)
+- Multi-asset backtest structure
+- All 3 strategies: unit tests + smoke tests in both engines
+
+### Known Test Issues
+- `conftest.make_ohlcv` produces invalid OHLC (High < Close, Low > Close). OHLCV strategies (ATR Breakout, Pivot Points) cannot generate trades with it — integration tests for those strategies are smoke-only (no crash, but no trade assertions).
+- Cross-engine tests use loose tolerances (50% trade count, 25% win rate).
 
 ### Needs More Tests
 - [ ] Position tracking consistency between bot and strategies
-- [ ] Open position at end of backtest
-- [ ] Overlapping buy signals (buy while already long)
 - [ ] `next_open` model edge cases (last bar, gap bars)
 - [ ] Strategy state leakage between backtest runs
-- [ ] Multi-asset backtest correctness
-- [ ] OHLC data with invalid structure (High < Low)
 - [ ] Real yfinance data (all current tests use synthetic data)
+- [ ] ATR Breakout integration test with OHLCV-valid synthetic data
 
 ---
 
@@ -280,5 +283,6 @@ Only counts consecutive bars below peak. Doesn't distinguish partial vs. full re
 | `src/strategies/pivot_points.py` | ~110 | Pivot point strategy |
 | `src/multi_asset.py` | ~90 | Multi-symbol backtesting |
 | `src/bar_permute.py` | ~70 | MCPT bar permutation |
-| `tests/test_backtest.py` | ~231 | Backtest engine tests |
-| `tests/test_metrics.py` | ~195 | Metrics tests |
+| `tests/test_backtest.py` | ~380 | Backtest engine tests |
+| `tests/test_metrics.py` | ~175 | Metrics tests |
+| `tests/conftest.py` | ~109 | Shared fixtures & data generators |

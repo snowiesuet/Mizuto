@@ -1,9 +1,15 @@
+import logging
+
 import pytest
 import numpy as np
 import pandas as pd
 from unittest.mock import patch
 from src.backtest import run_backtest, run_backtest_on_data
 from src.bot import LONG_WINDOW
+from src.strategies.base import BaseStrategy
+from src.strategies.ma_crossover import MACrossoverStrategy
+from src.strategies.atr_breakout import ATRBreakoutStrategy
+from src.strategies.pivot_points import PivotPointStrategy
 from tests.conftest import make_ohlcv, make_flat_ohlcv
 
 
@@ -90,24 +96,14 @@ class TestEquityCurve:
             data, short_window=5, long_window=20,
             slippage_pct=0.0, commission_pct=0.0, quiet=True,
         )
-        if result is not None:
-            assert 'equity_curve' in result
-            assert 'equity_dates' in result
-            assert 'initial_capital' in result
-            # Equity curve length = number of simulation bars
-            warmup = 20  # long_window
-            expected_len = len(data) - warmup
-            assert len(result['equity_curve']) == expected_len
-
-    def test_flat_data_constant_equity(self):
-        data = make_flat_ohlcv(n=100, price=100.0)
-        result = run_backtest_on_data(
-            data, short_window=5, long_window=20,
-            slippage_pct=0.0, commission_pct=0.0, quiet=True,
-            initial_capital=10000.0,
-        )
-        # Flat data = no trades = None
-        assert result is None
+        assert result is not None
+        assert 'equity_curve' in result
+        assert 'equity_dates' in result
+        assert 'initial_capital' in result
+        # Equity curve length = number of simulation bars
+        warmup = 20  # long_window
+        expected_len = len(data) - warmup
+        assert len(result['equity_curve']) == expected_len
 
     def test_custom_initial_capital(self):
         data = make_ohlcv(n=200, volatility=5.0, trend=1.0, seed=42)
@@ -116,8 +112,8 @@ class TestEquityCurve:
             slippage_pct=0.0, commission_pct=0.0, quiet=True,
             initial_capital=50000.0,
         )
-        if result is not None:
-            assert result['initial_capital'] == 50000.0
+        assert result is not None
+        assert result['initial_capital'] == 50000.0
 
 
 class TestFillModel:
@@ -128,9 +124,8 @@ class TestFillModel:
             data, short_window=5, long_window=20,
             slippage_pct=0.001, commission_pct=0.001, quiet=True,
         )
-        # Should succeed without error
-        if result is not None:
-            assert result['trade_count'] >= 1
+        assert result is not None
+        assert result['trade_count'] >= 1
 
     def test_invalid_fill_model_raises(self):
         data = make_ohlcv(n=100)
@@ -173,13 +168,14 @@ class TestFillModel:
             slippage_pct=0.0, commission_pct=0.0, quiet=True,
             fill_model="next_open",
         )
-        # If both produce trades, PnL should typically differ
-        if result_close is not None and result_open is not None:
-            if result_close['trade_count'] > 0 and result_open['trade_count'] > 0:
-                # At least fill prices should differ
-                close_fills = [t['price'] for t in result_close['trades']]
-                open_fills = [t['price'] for t in result_open['trades']]
-                assert close_fills != open_fills
+        assert result_close is not None
+        assert result_open is not None
+        assert result_close['trade_count'] > 0
+        assert result_open['trade_count'] > 0
+        # Fill prices should differ between close and next_open models
+        close_fills = [t['price'] for t in result_close['trades']]
+        open_fills = [t['price'] for t in result_open['trades']]
+        assert close_fills != open_fills
 
     def test_vwap_slippage_model_runs(self):
         """vwap_slippage fill model should run without errors."""
@@ -223,8 +219,161 @@ class TestFillModel:
             slippage_pct=0.01, commission_pct=0.0, quiet=True,
             fill_model="vwap_slippage",
         )
-        if result_close is not None and result_vwap is not None:
-            # Fill prices should differ due to volume-scaled slippage
-            close_fills = [t['price'] for t in result_close['trades']]
-            vwap_fills = [t['price'] for t in result_vwap['trades']]
-            assert close_fills != vwap_fills
+        assert result_close is not None
+        assert result_vwap is not None
+        # Fill prices should differ due to volume-scaled slippage
+        close_fills = [t['price'] for t in result_close['trades']]
+        vwap_fills = [t['price'] for t in result_vwap['trades']]
+        assert close_fills != vwap_fills
+
+
+class TestForceCloseAtEnd:
+    def test_open_position_is_force_closed(self):
+        """If backtest ends with an open long, it should be force-closed."""
+        # Pure uptrend: buy signal fires, never sells
+        flat = [100.0] * LONG_WINDOW
+        rising = [100.0 + i * 5 for i in range(1, 31)]
+        prices = flat + rising
+        dates = pd.bdate_range(start="2023-01-01", periods=len(prices))
+        data = pd.DataFrame({"Close": prices}, index=dates)
+
+        result = run_backtest_on_data(
+            data, short_window=5, long_window=20,
+            slippage_pct=0.0, commission_pct=0.0, quiet=True,
+        )
+        assert result is not None
+        # Last trade should be a sell (force-close)
+        last_trade = result['trades'][-1]
+        assert last_trade['type'] == 'sell'
+        assert last_trade['closed_position'] == 'long'
+        # PnL should reflect the unrealized gain
+        assert result['pnl'] > 0
+        assert result['trade_count'] >= 1
+
+class TestProfitFactorCapped:
+    def test_profit_factor_not_infinite(self):
+        """When all trades are winners, profit_factor should be capped at 999.99."""
+        # Gentle uptrend that produces a buy then a profitable sell
+        flat = [100.0] * LONG_WINDOW
+        up = [100.0 + i * 3 for i in range(1, 16)]
+        down = [145.0 - i * 2 for i in range(1, 16)]
+        up2 = [115.0 + i * 3 for i in range(1, 16)]
+        prices = flat + up + down + up2
+        dates = pd.bdate_range(start="2023-01-01", periods=len(prices))
+        data = pd.DataFrame({"Close": prices}, index=dates)
+
+        result = run_backtest_on_data(
+            data, short_window=5, long_window=20,
+            slippage_pct=0.0, commission_pct=0.0, quiet=True,
+        )
+        if result is not None and result['gross_losses'] == 0:
+            assert result['profit_factor'] == 999.99
+
+
+class TestOHLCValidation:
+    def test_warns_on_bad_ohlc(self, caplog):
+        """Should warn when High < max(Open, Close) or Low > min(Open, Close)."""
+        dates = pd.bdate_range(start="2023-01-01", periods=50)
+        closes = np.linspace(100, 130, 50)
+        data = pd.DataFrame({
+            "Open": closes + 2,
+            "High": closes - 5,   # Intentionally BELOW Close — invalid
+            "Low": closes + 10,   # Intentionally ABOVE Close — invalid
+            "Close": closes,
+            "Volume": np.ones(50) * 1000,
+        }, index=dates)
+
+        with caplog.at_level(logging.WARNING):
+            run_backtest_on_data(
+                data, short_window=5, long_window=20,
+                slippage_pct=0.0, commission_pct=0.0, quiet=False,
+            )
+
+        warning_msgs = [r.message for r in caplog.records if "OHLC validation" in r.message]
+        assert len(warning_msgs) >= 1
+
+    def test_no_warning_on_clean_ohlc(self, caplog):
+        """Clean OHLCV data should not trigger OHLC validation warnings."""
+        data = make_flat_ohlcv(n=100, price=100.0)
+
+        with caplog.at_level(logging.WARNING):
+            run_backtest_on_data(
+                data, short_window=5, long_window=20,
+                slippage_pct=0.0, commission_pct=0.0, quiet=False,
+            )
+
+        ohlc_warnings = [r for r in caplog.records if "OHLC validation" in r.message]
+        assert len(ohlc_warnings) == 0
+
+
+class TestWarmupPeriod:
+    def test_ma_crossover_warmup(self):
+        s = MACrossoverStrategy(short_window=5, long_window=20)
+        assert s.warmup_period == 20
+
+    def test_atr_breakout_warmup(self):
+        s = ATRBreakoutStrategy()
+        assert s.warmup_period == 29  # max(14*2, 14, 20) + 1
+
+    def test_pivot_points_warmup(self):
+        s = PivotPointStrategy()
+        assert s.warmup_period == 3
+
+    def test_base_strategy_default_warmup(self):
+        """BaseStrategy default warmup_period should be 0."""
+        # Create a minimal concrete subclass
+        class DummyStrategy(BaseStrategy):
+            name = "Dummy"
+            def on_price(self, price, has_position):
+                return 'hold'
+            def reset(self):
+                pass
+
+        s = DummyStrategy()
+        assert s.warmup_period == 0
+
+
+class TestFillModelValidation:
+    def test_warns_on_unsupported_fill_model(self, caplog):
+        """Should warn when fill model is not in strategy's supported list."""
+        class RestrictedStrategy(BaseStrategy):
+            name = "Restricted"
+
+            @property
+            def supported_fill_models(self):
+                return ('close',)
+
+            def on_price(self, price, has_position):
+                return 'hold'
+
+            def reset(self):
+                pass
+
+        data = make_ohlcv(n=100)
+
+        with caplog.at_level(logging.WARNING):
+            run_backtest_on_data(
+                data, strategy=RestrictedStrategy(),
+                short_window=5, long_window=20,
+                slippage_pct=0.0, commission_pct=0.0, quiet=False,
+                fill_model="next_open",
+            )
+
+        fill_warnings = [r for r in caplog.records
+                         if "does not declare support" in r.message]
+        assert len(fill_warnings) == 1
+
+    def test_no_warning_on_default_fill_models(self, caplog):
+        """Default strategies should not warn about fill model support."""
+        data = make_ohlcv(n=100)
+
+        with caplog.at_level(logging.WARNING):
+            run_backtest_on_data(
+                data, short_window=5, long_window=20,
+                slippage_pct=0.0, commission_pct=0.0, quiet=False,
+                fill_model="close",
+            )
+
+        fill_warnings = [r for r in caplog.records
+                         if "does not declare support" in r.message]
+        assert len(fill_warnings) == 0
