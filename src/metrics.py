@@ -170,6 +170,26 @@ def compute_annualized_return(equity_curve, periods_per_year=252):
     return float((1 + total_return) ** (1 / years) - 1)
 
 
+def compute_calmar_ratio(equity_curve, dates, periods_per_year=252):
+    """Calmar ratio = CAGR / |max drawdown|.
+
+    Args:
+        equity_curve: List of portfolio values.
+        dates: List of datetime-like objects corresponding to equity_curve.
+        periods_per_year: Trading periods per year.
+
+    Returns:
+        Float Calmar ratio. Returns ``float('inf')`` if no drawdown with
+        positive CAGR, 0.0 if insufficient data.
+    """
+    cagr = compute_cagr(equity_curve, dates, periods_per_year)
+    dd = compute_max_drawdown(equity_curve)
+    max_dd = abs(dd['max_drawdown_pct'])
+    if max_dd == 0:
+        return float('inf') if cagr > 0 else 0.0
+    return cagr / max_dd
+
+
 def compute_buy_and_hold_return(data, initial_capital):
     """Buy-and-hold return for comparison.
 
@@ -229,6 +249,8 @@ def compute_all_metrics(equity_curve, equity_dates, data, initial_capital,
         equity_curve, equity_dates, periods_per_year)
     result['annualized_return'] = compute_annualized_return(
         equity_curve, periods_per_year)
+    result['calmar_ratio'] = compute_calmar_ratio(
+        equity_curve, equity_dates, periods_per_year)
 
     bh = compute_buy_and_hold_return(data, initial_capital)
     result.update(bh)

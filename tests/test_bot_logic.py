@@ -83,7 +83,7 @@ class TestSignals:
         # short MA (last 3): mean(50, 50, 5) = 35
         # long MA (last 5): mean(50, 50, 50, 50, 5) = 41
         # short < long → sell
-        assert signal == 'sell'
+        assert signal == ('sell', 'signal_reversal')
 
     def test_hold_when_no_crossover_no_position(self):
         """Short MA > Long MA but already no position and already generated buy before → hold.
@@ -135,7 +135,7 @@ class TestTrailingStopLoss:
 
         # Price drops below the trailing stop (110 * 0.95 = 104.5) → sell
         signal = bot._run_strategy_logic(104.0)
-        assert signal == 'sell'
+        assert signal == ('sell', 'trailing_sl_hit')
 
 
 class TestFixedStopLoss:
@@ -153,7 +153,7 @@ class TestFixedStopLoss:
 
         # Price at 89 → below 90 stop → sell
         signal = bot._run_strategy_logic(89.0)
-        assert signal == 'sell'
+        assert signal == ('sell', 'fixed_sl_hit')
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +217,7 @@ class TestBarTrailingStopLong:
         # Price drops below trailing stop (110 * 0.95 = 104.5) → sell
         bar2 = {'Open': 105, 'High': 106, 'Low': 103, 'Close': 104, 'Volume': 1000}
         signal = bot._run_strategy_logic_bar(bar2)
-        assert signal == 'sell'
+        assert signal == ('sell', 'trailing_sl_hit')
 
 
 class TestBarTrailingStopShort:
@@ -238,7 +238,7 @@ class TestBarTrailingStopShort:
         # Price rises above stop (90 * 1.05 = 94.5) → sell
         bar2 = {'Open': 94, 'High': 96, 'Low': 93, 'Close': 95, 'Volume': 1000}
         signal = bot._run_strategy_logic_bar(bar2)
-        assert signal == 'sell'
+        assert signal == ('sell', 'trailing_sl_hit')
 
 
 class TestBarFixedStop:
@@ -251,7 +251,7 @@ class TestBarFixedStop:
 
         bar = {'Open': 89, 'High': 91, 'Low': 88, 'Close': 89, 'Volume': 1000}
         signal = bot._run_strategy_logic_bar(bar)
-        assert signal == 'sell'
+        assert signal == ('sell', 'fixed_sl_hit')
 
     def test_fixed_stop_short_triggers_sell(self):
         """Short position: price rises above fixed stop → sell."""
@@ -262,7 +262,7 @@ class TestBarFixedStop:
 
         bar = {'Open': 111, 'High': 112, 'Low': 110, 'Close': 111, 'Volume': 1000}
         signal = bot._run_strategy_logic_bar(bar)
-        assert signal == 'sell'
+        assert signal == ('sell', 'fixed_sl_hit')
 
 
 class TestBarDelegatesToStrategy:

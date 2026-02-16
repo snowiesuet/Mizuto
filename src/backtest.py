@@ -8,6 +8,16 @@ from src.bot import TradingBot, LONG_WINDOW, SHORT_WINDOW
 from src.utils import configure_logging
 
 
+def _unpack_signal(raw):
+    """Normalize strategy/bot return into (signal_type, exit_reason).
+
+    Accepts bare strings (``'sell'``) or tuples (``('sell', 'sl_hit')``).
+    """
+    if isinstance(raw, tuple):
+        return raw[0], raw[1]
+    return raw, None
+
+
 def _validate_ohlc_structure(data):
     """Warn on OHLC bars where High/Low don't bracket Open/Close.
 
@@ -189,7 +199,8 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
 
     # --- Backtesting Simulation ---
     trades = []
-    pending_signal = None  # For next_open fill model
+    pending_signal = None  # For next_open fill model: (signal_type, exit_reason, bar)
+    entry_bar_idx = None   # Bar index when position was opened (for bars_held)
 
     sim_rows = list(simulation_data.iterrows())
     for i, (index, row) in enumerate(sim_rows):
@@ -197,7 +208,7 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
 
         # --- Execute pending signal from previous bar (next_open model) ---
         if fill_model == 'next_open' and pending_signal is not None:
-            pending_sig, pending_bar = pending_signal
+            pending_sig, pending_exit_reason, pending_bar = pending_signal
             pending_signal = None
             open_price = float(row['Open'])
 
@@ -205,6 +216,7 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                 fill_price = _compute_fill_price(open_price, 'buy', slippage_pct, fill_model)
                 bot.has_position = True
                 bot._handle_position_entry(fill_price, position_type='long')
+                entry_bar_idx = i
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
                                'type': 'buy', 'price': fill_price})
                 logging.info(f"Simulating BUY at {fill_price:.2f} (open {open_price:.2f}) on {index}")
@@ -213,6 +225,7 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                 fill_price = _compute_fill_price(open_price, 'short', slippage_pct, fill_model)
                 bot.has_position = True
                 bot._handle_position_entry(fill_price, position_type='short')
+                entry_bar_idx = i
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
                                'type': 'short', 'price': fill_price})
                 logging.info(f"Simulating SHORT at {fill_price:.2f} (open {open_price:.2f}) on {index}")
@@ -222,6 +235,7 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                 fill_price = _compute_fill_price(open_price, sig_type, slippage_pct, fill_model)
                 closing_position_type = bot.position_type
                 closing_entry_price = bot.entry_price
+                bars_held = (i - entry_bar_idx) if entry_bar_idx is not None else 0
                 bot.has_position = False
                 bot._handle_position_exit()
                 # Update cash with realized PnL
@@ -236,7 +250,11 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                 cash += realized - entry_comm - exit_comm
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
                                'type': 'sell', 'price': fill_price,
-                               'closed_position': closing_position_type})
+                               'closed_position': closing_position_type,
+                               'exit_reason': pending_exit_reason,
+                               'bars_held': bars_held,
+                               'entry_price': closing_entry_price})
+                entry_bar_idx = None
                 logging.info(f"Simulating SELL ({closing_position_type}) at {fill_price:.2f} (open {open_price:.2f}) on {index}")
 
             else:
@@ -267,14 +285,16 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                 'Close': current_price,
                 'Volume': float(row['Volume']) if 'Volume' in row.index else 0,
             }
-            signal = bot._run_strategy_logic_bar(bar)
+            raw_signal = bot._run_strategy_logic_bar(bar)
         else:
-            signal = bot._run_strategy_logic(current_price)
+            raw_signal = bot._run_strategy_logic(current_price)
+
+        signal, exit_reason = _unpack_signal(raw_signal)
 
         if fill_model == 'next_open':
             # Defer execution to next bar
             if signal in ('buy', 'short', 'sell'):
-                pending_signal = (signal, bar)
+                pending_signal = (signal, exit_reason, bar)
         else:
             # Execute immediately (close and vwap_slippage models)
             if signal == 'buy' and not bot.has_position:
@@ -282,6 +302,7 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                                                   fill_model, bar=bar, median_volume=median_volume)
                 bot.has_position = True
                 bot._handle_position_entry(fill_price, position_type='long')
+                entry_bar_idx = i
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
                                'type': 'buy', 'price': fill_price})
                 logging.info(f"Simulating BUY at {fill_price:.2f} (market {current_price:.2f}) on {index}")
@@ -291,6 +312,7 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                                                   fill_model, bar=bar, median_volume=median_volume)
                 bot.has_position = True
                 bot._handle_position_entry(fill_price, position_type='short')
+                entry_bar_idx = i
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
                                'type': 'short', 'price': fill_price})
                 logging.info(f"Simulating SHORT at {fill_price:.2f} (market {current_price:.2f}) on {index}")
@@ -301,6 +323,7 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                                                   fill_model, bar=bar, median_volume=median_volume)
                 closing_position_type = bot.position_type
                 closing_entry_price = bot.entry_price
+                bars_held = (i - entry_bar_idx) if entry_bar_idx is not None else 0
                 bot.has_position = False
                 bot._handle_position_exit()
                 # Update cash with realized PnL
@@ -315,7 +338,11 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                 cash += realized - entry_comm - exit_comm
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
                                'type': 'sell', 'price': fill_price,
-                               'closed_position': closing_position_type})
+                               'closed_position': closing_position_type,
+                               'exit_reason': exit_reason,
+                               'bars_held': bars_held,
+                               'entry_price': closing_entry_price})
+                entry_bar_idx = None
                 logging.info(f"Simulating SELL ({closing_position_type}) at {fill_price:.2f} (market {current_price:.2f}) on {index}")
 
         # --- Track equity (mark-to-market) ---
@@ -339,6 +366,7 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
         last_date = simulation_data.index[-1]
         closing_position_type = bot.position_type
         closing_entry_price = bot.entry_price
+        bars_held = (len(sim_rows) - 1 - entry_bar_idx) if entry_bar_idx is not None else 0
 
         if closing_position_type == 'long':
             realized = (last_price - closing_entry_price) * trade_amount
@@ -359,7 +387,11 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
             'type': 'sell',
             'price': last_price,
             'closed_position': closing_position_type,
+            'exit_reason': 'end_of_data',
+            'bars_held': bars_held,
+            'entry_price': closing_entry_price,
         })
+        entry_bar_idx = None
         logging.info(
             f"Force-closed {closing_position_type} position at {last_price:.2f} "
             f"(end of backtest)"
@@ -379,6 +411,9 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
     last_entry_price = 0
     last_entry_type = None  # 'buy' or 'short'
     trade_count = 0
+    round_trip_profits = []  # per-trade profit for enhanced stats
+    round_trip_bars = []     # per-trade bars held
+    exit_reason_counts = {}  # exit_reason → count
 
     for trade in trades:
         commission = trade['price'] * commission_pct
@@ -400,6 +435,7 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                 profit = trade['price'] - last_entry_price - entry_commission - exit_commission
 
             pnl += profit
+            round_trip_profits.append(profit)
             if profit > 0:
                 wins += 1
                 gross_profits += profit
@@ -410,7 +446,51 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
             last_entry_type = None
             trade_count += 1
 
+            # Track bars held
+            bh = trade.get('bars_held')
+            if bh is not None:
+                round_trip_bars.append(bh)
+
+            # Track exit reasons
+            reason = trade.get('exit_reason')
+            if reason is not None:
+                exit_reason_counts[reason] = exit_reason_counts.get(reason, 0) + 1
+
     profit_factor = gross_profits / gross_losses if gross_losses > 0 else 999.99
+
+    # --- Enhanced trade statistics ---
+    # Consecutive wins / losses
+    max_consecutive_wins = 0
+    max_consecutive_losses = 0
+    current_wins = 0
+    current_losses = 0
+    for p in round_trip_profits:
+        if p > 0:
+            current_wins += 1
+            current_losses = 0
+            max_consecutive_wins = max(max_consecutive_wins, current_wins)
+        else:
+            current_losses += 1
+            current_wins = 0
+            max_consecutive_losses = max(max_consecutive_losses, current_losses)
+
+    largest_win = max(round_trip_profits) if round_trip_profits else 0.0
+    largest_loss = min(round_trip_profits) if round_trip_profits else 0.0
+    avg_bars_held = (sum(round_trip_bars) / len(round_trip_bars)) if round_trip_bars else 0.0
+
+    # Expectancy: (avg_win × win_rate) - (avg_loss × loss_rate)
+    if trade_count > 0:
+        win_rate = wins / trade_count
+        loss_rate = losses / trade_count
+        avg_win = (gross_profits / wins) if wins > 0 else 0.0
+        avg_loss = (gross_losses / losses) if losses > 0 else 0.0
+        expectancy = (avg_win * win_rate) - (avg_loss * loss_rate)
+    else:
+        win_rate = 0.0
+        loss_rate = 0.0
+        avg_win = 0.0
+        avg_loss = 0.0
+        expectancy = 0.0
 
     logging.info("--- Backtest Results ---")
     logging.info(f"Total PnL (after costs): {pnl:.2f}")
@@ -419,7 +499,9 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
     logging.info(f"Completed Trades (Buy/Sell pairs): {trade_count}")
     if trade_count > 0:
         logging.info(f"Win/Loss Ratio: {wins}/{losses}")
-        logging.info(f"Win Rate: {(wins/trade_count)*100:.2f}%")
+        logging.info(f"Win Rate: {win_rate*100:.2f}%")
+        logging.info(f"Expectancy: {expectancy:.2f}")
+        logging.info(f"Avg Bars Held: {avg_bars_held:.1f}")
 
     result = {
         'pnl': pnl,
@@ -434,6 +516,13 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
         'equity_curve': equity_curve,
         'equity_dates': equity_dates,
         'initial_capital': initial_capital,
+        'consecutive_wins': max_consecutive_wins,
+        'consecutive_losses': max_consecutive_losses,
+        'largest_win': largest_win,
+        'largest_loss': largest_loss,
+        'avg_bars_held': avg_bars_held,
+        'expectancy': expectancy,
+        'exit_reason_counts': exit_reason_counts,
     }
 
     # Compute risk-adjusted metrics if equity curve is available
@@ -476,6 +565,9 @@ def run_backtest(symbol, trade_amount, start_date, end_date, trailing_stop_pct=N
     # --- Data Fetching ---
     try:
         data = yf.download(tickers=symbol, start=start_date, end=end_date, interval="1d", auto_adjust=True)
+        # yfinance returns MultiIndex columns for single tickers; flatten them
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.get_level_values(0)
         if data.empty:
             logging.error("No data fetched for the given date range. Aborting backtest.")
             return

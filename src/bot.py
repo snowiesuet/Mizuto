@@ -88,14 +88,14 @@ class TradingBot:
 
             if current_price <= self.stop_loss_price:
                 logging.info(f"Trailing stop-loss triggered! Price {current_price:.2f} <= Stop {self.stop_loss_price:.2f}")
-                return 'sell'
+                return ('sell', 'trailing_sl_hit')
 
         # --- Check for fixed stop-loss if we have a position ---
         if self.has_position and self.stop_loss_pct is not None and self.entry_price is not None:
             fixed_stop_price = self.entry_price * (1 - self.stop_loss_pct)
             if current_price <= fixed_stop_price:
                 logging.info(f"Fixed stop-loss triggered! Price {current_price:.2f} <= Stop {fixed_stop_price:.2f}")
-                return 'sell'
+                return ('sell', 'fixed_sl_hit')
 
         # --- Delegate signal generation to the strategy ---
         return self.strategy.on_price(current_price, self.has_position)
@@ -117,7 +117,7 @@ class TradingBot:
                     self.stop_loss_price = self.highest_price * (1 + self.trailing_stop_pct)
                 if current_price >= self.stop_loss_price:
                     logging.info(f"Trailing stop-loss triggered (short)! Price {current_price:.2f} >= Stop {self.stop_loss_price:.2f}")
-                    return 'sell'
+                    return ('sell', 'trailing_sl_hit')
             else:
                 # Long position (original behavior)
                 if self.highest_price is None or current_price > self.highest_price:
@@ -125,7 +125,7 @@ class TradingBot:
                     self.stop_loss_price = self.highest_price * (1 - self.trailing_stop_pct)
                 if current_price <= self.stop_loss_price:
                     logging.info(f"Trailing stop-loss triggered! Price {current_price:.2f} <= Stop {self.stop_loss_price:.2f}")
-                    return 'sell'
+                    return ('sell', 'trailing_sl_hit')
 
         # --- Bot-level fixed stop-loss ---
         if self.has_position and self.stop_loss_pct is not None and self.entry_price is not None:
@@ -133,12 +133,12 @@ class TradingBot:
                 fixed_stop_price = self.entry_price * (1 + self.stop_loss_pct)
                 if current_price >= fixed_stop_price:
                     logging.info(f"Fixed stop-loss triggered (short)! Price {current_price:.2f} >= Stop {fixed_stop_price:.2f}")
-                    return 'sell'
+                    return ('sell', 'fixed_sl_hit')
             else:
                 fixed_stop_price = self.entry_price * (1 - self.stop_loss_pct)
                 if current_price <= fixed_stop_price:
                     logging.info(f"Fixed stop-loss triggered! Price {current_price:.2f} <= Stop {fixed_stop_price:.2f}")
-                    return 'sell'
+                    return ('sell', 'fixed_sl_hit')
 
         # --- Delegate to strategy ---
         return self.strategy.on_bar(bar, self.has_position, self.position_type)
@@ -180,7 +180,8 @@ class TradingBot:
             logging.warning("Could not retrieve price. Skipping this cycle.")
             return
 
-        signal = self._run_strategy_logic(current_price)
+        raw_signal = self._run_strategy_logic(current_price)
+        signal = raw_signal[0] if isinstance(raw_signal, tuple) else raw_signal
 
         if signal == 'buy':
             if place_order(self.symbol, 'buy', self.trade_amount):

@@ -124,27 +124,27 @@ class ATRBreakoutStrategy(BaseStrategy):
             if weak_trend:
                 logging.info(f"ATR Breakout: emergency exit — ADX {adx_val:.1f} < {self.adx_threshold * 0.7:.1f}")
                 self._clear_internal_position()
-                return 'sell'
+                return ('sell', 'signal_reversal')
 
             # Check SL/TP
             if self._position_type == 'long':
                 if self._sl_price is not None and price <= self._sl_price:
                     logging.info(f"ATR Breakout: long SL hit at {price:.2f}")
                     self._clear_internal_position()
-                    return 'sell'
+                    return ('sell', 'sl_hit')
                 if self._tp_price is not None and price >= self._tp_price:
                     logging.info(f"ATR Breakout: long TP hit at {price:.2f}")
                     self._clear_internal_position()
-                    return 'sell'
+                    return ('sell', 'tp_hit')
             elif self._position_type == 'short':
                 if self._sl_price is not None and price >= self._sl_price:
                     logging.info(f"ATR Breakout: short SL hit at {price:.2f}")
                     self._clear_internal_position()
-                    return 'sell'
+                    return ('sell', 'sl_hit')
                 if self._tp_price is not None and price <= self._tp_price:
                     logging.info(f"ATR Breakout: short TP hit at {price:.2f}")
                     self._clear_internal_position()
-                    return 'sell'
+                    return ('sell', 'tp_hit')
 
             return 'hold'
 

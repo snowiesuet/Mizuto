@@ -19,7 +19,7 @@ class BaseStrategy(ABC):
         ...
 
     @abstractmethod
-    def on_price(self, price: float, has_position: bool) -> str:
+    def on_price(self, price: float, has_position: bool) -> "str | tuple[str, str]":
         """Process a new price tick and return a signal.
 
         Args:
@@ -27,7 +27,10 @@ class BaseStrategy(ABC):
             has_position: Whether the bot currently holds a position.
 
         Returns:
-            One of ``'buy'``, ``'sell'``, ``'short'``, or ``'hold'``.
+            ``'buy'``, ``'short'``, ``'hold'``, or a sell signal.
+            Sell signals may be a bare ``'sell'`` string or a tuple
+            ``('sell', reason)`` where *reason* is one of ``'signal_reversal'``,
+            ``'sl_hit'``, ``'tp_hit'``.
         """
         ...
 
@@ -58,7 +61,7 @@ class BaseStrategy(ABC):
         """
         return ('close', 'next_open', 'vwap_slippage')
 
-    def on_bar(self, bar: dict, has_position: bool, position_type: str = None) -> str:
+    def on_bar(self, bar: dict, has_position: bool, position_type: str = None) -> "str | tuple[str, str]":
         """Process a full OHLCV bar and return a signal.
 
         The default implementation delegates to ``on_price(bar['Close'], has_position)``.
@@ -70,7 +73,9 @@ class BaseStrategy(ABC):
             position_type: ``'long'``, ``'short'``, or ``None``.
 
         Returns:
-            One of ``'buy'``, ``'sell'``, ``'short'``, or ``'hold'``.
+            ``'buy'``, ``'short'``, ``'hold'``, or a sell signal.
+            Sell signals may be a bare ``'sell'`` string or a tuple
+            ``('sell', reason)``.
         """
         return self.on_price(bar['Close'], has_position)
 

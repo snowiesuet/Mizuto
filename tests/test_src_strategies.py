@@ -101,7 +101,7 @@ class TestATRBreakoutStrategy:
         # Price hits SL
         bar = {'Open': 89, 'High': 91, 'Low': 88, 'Close': 89, 'Volume': 1000}
         signal = s.on_bar(bar, True, 'long')
-        assert signal == 'sell'
+        assert signal == ('sell', 'sl_hit')
 
     def test_sl_tp_exit_short(self):
         """Short position: hitting SL (price rises) should produce 'sell'."""
@@ -115,7 +115,7 @@ class TestATRBreakoutStrategy:
             s._closes.append(100 + i * 0.1)
         bar = {'Open': 111, 'High': 112, 'Low': 110, 'Close': 111, 'Volume': 1000}
         signal = s.on_bar(bar, True, 'short')
-        assert signal == 'sell'
+        assert signal == ('sell', 'sl_hit')
 
 
 # ===========================================================================
@@ -165,7 +165,7 @@ class TestPivotPointStrategy:
         assert s._position_type == 'short'
 
     def test_sl_exit_long(self):
-        """Long position: price hitting SL should produce 'sell'."""
+        """Long position: price hitting SL should produce ('sell', 'sl_hit')."""
         s = PivotPointStrategy()
         s._position_type = 'long'
         s._sl_price = 80.0
@@ -177,10 +177,10 @@ class TestPivotPointStrategy:
 
         bar = {'Open': 79, 'High': 80, 'Low': 78, 'Close': 79, 'Volume': 1000}
         signal = s.on_bar(bar, True, 'long')
-        assert signal == 'sell'
+        assert signal == ('sell', 'sl_hit')
 
     def test_sl_exit_short(self):
-        """Short position: price hitting SL (rising) should produce 'sell'."""
+        """Short position: price hitting SL (rising) should produce ('sell', 'sl_hit')."""
         s = PivotPointStrategy()
         s._position_type = 'short'
         s._sl_price = 120.0
@@ -192,7 +192,7 @@ class TestPivotPointStrategy:
 
         bar = {'Open': 121, 'High': 122, 'Low': 120, 'Close': 121, 'Volume': 1000}
         signal = s.on_bar(bar, True, 'short')
-        assert signal == 'sell'
+        assert signal == ('sell', 'sl_hit')
 
     def test_reset(self):
         s = PivotPointStrategy()
@@ -280,7 +280,7 @@ class TestBotShortPosition:
         # Price rises to 95 → above stop of 94.5 → sell
         bar2 = {'Open': 95, 'High': 96, 'Low': 94, 'Close': 95, 'Volume': 1000}
         signal = bot._run_strategy_logic_bar(bar2)
-        assert signal == 'sell'
+        assert signal == ('sell', 'trailing_sl_hit')
 
     def test_backward_compat_entry_defaults_to_long(self):
         """Calling _handle_position_entry without position_type defaults to 'long'."""

@@ -89,20 +89,20 @@ class PivotPointStrategy(BaseStrategy):
                 if self._sl_price is not None and price <= self._sl_price:
                     logging.info(f"Pivot Points: long SL hit at {price:.2f}")
                     self._clear_internal_position()
-                    return 'sell'
+                    return ('sell', 'sl_hit')
                 if self._tp_price is not None and price >= self._tp_price:
                     logging.info(f"Pivot Points: long TP hit at {price:.2f}")
                     self._clear_internal_position()
-                    return 'sell'
+                    return ('sell', 'tp_hit')
             elif self._position_type == 'short':
                 if self._sl_price is not None and price >= self._sl_price:
                     logging.info(f"Pivot Points: short SL hit at {price:.2f}")
                     self._clear_internal_position()
-                    return 'sell'
+                    return ('sell', 'sl_hit')
                 if self._tp_price is not None and price <= self._tp_price:
                     logging.info(f"Pivot Points: short TP hit at {price:.2f}")
                     self._clear_internal_position()
-                    return 'sell'
+                    return ('sell', 'tp_hit')
             return 'hold'
 
         if has_position:

@@ -74,12 +74,12 @@ Before building ML models, fix known issues and add the analytics needed to trus
   - [x] Unify warmup logic — always use `max(strategy.warmup_period, long_window)`.
   - [x] Validate that selected strategy supports chosen fill model.
 
-- [ ] **Step 3.3: Trade Attribution & Analytics**
-  - [ ] Add exit reason tracking: `'sl_hit'`, `'tp_hit'`, `'signal_reversal'`, `'end_of_data'`.
-  - [ ] Track trade duration (bars held per trade).
-  - [ ] Compute enhanced stats: consecutive wins/losses, largest win/loss, average hold time.
-  - [ ] Add expectancy: `(avg_win × win_rate) - (avg_loss × loss_rate)`.
-  - [ ] Add Calmar ratio (CAGR / max drawdown).
+- [x] **Step 3.3: Trade Attribution & Analytics**
+  - [x] Add exit reason tracking: strategies/bot return `('sell', reason)` tuples. Reasons: `'sl_hit'`, `'tp_hit'`, `'signal_reversal'`, `'trailing_sl_hit'`, `'fixed_sl_hit'`, `'end_of_data'`.
+  - [x] Track trade duration (`bars_held` per trade via `entry_bar_idx`).
+  - [x] Compute enhanced stats: `consecutive_wins`, `consecutive_losses`, `largest_win`, `largest_loss`, `avg_bars_held`, `exit_reason_counts`.
+  - [x] Add expectancy: `(avg_win × win_rate) - (avg_loss × loss_rate)`.
+  - [x] Add Calmar ratio (`compute_calmar_ratio()` in `src/metrics.py`).
 
 - [ ] **Step 3.4: Position Sizing & Risk Management**
   - [ ] Volatility-scaled position sizing (size based on ATR or rolling std).

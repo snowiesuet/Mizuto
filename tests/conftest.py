@@ -34,9 +34,11 @@ def make_ohlcv(n=200, base=100.0, volatility=5.0, trend=0.0, seed=42):
     for i in range(1, n):
         closes.append(closes[-1] + trend + rng.randn() * volatility)
     closes = np.array(closes)
-    highs = closes + rng.uniform(1, volatility, n)
-    lows = closes - rng.uniform(1, volatility, n)
     opens = closes + rng.randn(n) * 2
+    bar_max = np.maximum(opens, closes)
+    bar_min = np.minimum(opens, closes)
+    highs = bar_max + rng.uniform(1, volatility, n)
+    lows = bar_min - rng.uniform(1, volatility, n)
     volume = rng.randint(1000, 10000, n).astype(float)
     return pd.DataFrame(
         {"Open": opens, "High": highs, "Low": lows, "Close": closes, "Volume": volume},
@@ -60,10 +62,12 @@ def make_trending_ohlcv(n=200, start=50.0, end=150.0, seed=99):
     rng = np.random.RandomState(seed)
     noise = rng.randn(n) * 0.5
     close = np.maximum(close + noise, 1.0)
-    high = close + rng.uniform(0.5, 2.0, n)
-    low = close - rng.uniform(0.5, 2.0, n)
-    low = np.maximum(low, 0.5)
     open_ = close + rng.randn(n) * 0.3
+    bar_max = np.maximum(open_, close)
+    bar_min = np.minimum(open_, close)
+    high = bar_max + rng.uniform(0.5, 2.0, n)
+    low = bar_min - rng.uniform(0.5, 2.0, n)
+    low = np.maximum(low, 0.5)
     volume = rng.randint(100, 10000, n).astype(float)
     dates = pd.bdate_range(start="2023-01-01", periods=n)
     return pd.DataFrame(

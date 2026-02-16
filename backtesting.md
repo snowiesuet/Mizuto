@@ -92,26 +92,25 @@ Well-structured with clear separation of concerns. Strategy pattern is clean and
 
 ### Currently Computed
 
-**Trade-level**: Individual PnL, win/loss, gross profits/losses, win rate, profit factor.
+**Trade-level**: Individual PnL, win/loss, gross profits/losses, win rate, profit factor, exit reason, bars held, entry price.
 
-**Portfolio-level**: Total PnL (after costs), total commission, trade count, equity curve.
+**Portfolio-level**: Total PnL (after costs), total commission, trade count, equity curve, expectancy.
+
+**Enhanced stats**: Consecutive wins/losses (max streak), largest win/loss, average bars held, exit reason counts.
 
 **Risk-adjusted** (from `src/metrics.py`):
 - Sharpe ratio (annualized, 252 trading days)
 - Sortino ratio (downside deviation only)
 - Max drawdown (%) and drawdown duration (bars)
 - CAGR and annualized return
+- Calmar ratio (CAGR / |max drawdown|)
 - Buy-and-hold comparison
+
+**Exit reason tracking**: Strategies and bot return `('sell', reason)` tuples. Reasons: `'signal_reversal'`, `'sl_hit'`, `'tp_hit'`, `'trailing_sl_hit'`, `'fixed_sl_hit'`, `'end_of_data'`. Backward compatible via `_unpack_signal()` helper.
 
 ### Not Yet Computed
 
-- Trade duration (time in position)
-- Exit reason attribution (SL vs TP vs signal reversal)
-- Consecutive win/loss streaks
-- Largest single win/loss
-- Calmar ratio (CAGR / max drawdown)
 - Recovery factor
-- Expectancy (avg win × win rate - avg loss × loss rate)
 - Ulcer index
 - Tail ratio
 
@@ -121,18 +120,14 @@ Well-structured with clear separation of concerns. Strategy pattern is clean and
 
 ### Critical (P0)
 
-#### 1. Position State Duplication
-**Where**: `src/backtest.py` maintains `position_type_tracker` AND `src/bot.py` maintains `bot.position_type`.
-**Risk**: State desynchronization — bot thinks one thing, backtest thinks another.
-**Fix**: Single source of truth. Backtest should read from bot, not track separately.
+#### ~~1. Position State Duplication~~ (FIXED)
+`position_type_tracker` removed from `backtest.py`. `bot.position_type` is the sole source of truth.
 
 #### ~~2. Open Positions Not Force-Closed at End of Backtest~~ (FIXED)
 Force-close logic added for both long and short positions. Tested in `test_open_position_is_force_closed`.
 
-#### 3. Strategy-Internal SL/TP Not Validated Against Bot State
-**Where**: ATR Breakout and Pivot strategies manage their own SL/TP.
-**Risk**: Strategy emits `'sell'` for its internal SL hit, but bot doesn't know why. If strategy logic is wrong, bot blindly follows.
-**Fix**: Have strategies report exit reasons; bot validates state consistency.
+#### ~~3. Strategy-Internal SL/TP Not Validated Against Bot State~~ (FIXED)
+Strategies now return `('sell', reason)` tuples with exit reasons (`'sl_hit'`, `'tp_hit'`, `'signal_reversal'`). Bot stop-losses return `('sell', 'trailing_sl_hit')` or `('sell', 'fixed_sl_hit')`. Backtest engine tracks exit reasons per trade via `_unpack_signal()` helper.
 
 ### Important (P1)
 
@@ -142,10 +137,8 @@ Capped at 999.99 when `gross_losses == 0`. Tested in `test_profit_factor_not_inf
 #### ~~5. Pending Signal Lost on Conflict~~ (FIXED)
 Warning now logged when pending signal conflicts with existing position ("Dropped pending" message).
 
-#### 6. Warmup Logic Inconsistent
-**Where**: `src/backtest.py:126-127` — OHLCV strategies use their own `warmup_period`, price-only strategies use `max(warmup, long_window)`.
-**Why**: Different treatment is confusing and could lead to under-primed indicators.
-**Fix**: Unify: always use `max(strategy.warmup_period, long_window)`.
+#### ~~6. Warmup Logic Inconsistent~~ (FIXED)
+Unified: always uses `max(strategy.warmup_period, long_window)` for all strategies.
 
 ### Minor (P2)
 
@@ -166,9 +159,9 @@ Only counts consecutive bars below peak. Doesn't distinguish partial vs. full re
 
 | Feature | Why It Matters |
 |---------|---------------|
-| **Trade attribution** | Know *why* each trade exited (SL, TP, signal, time-based). Essential for strategy tuning. |
+| ~~**Trade attribution**~~ | **Done.** Exit reasons tracked per trade: `sl_hit`, `tp_hit`, `signal_reversal`, `trailing_sl_hit`, `fixed_sl_hit`, `end_of_data`. |
 | **Position sizing** | Always fixed `trade_amount`. Need Kelly criterion, volatility scaling, or risk-parity. |
-| ~~**OHLC validation**~~ | **Done.** Warns on invalid bars. Note: `conftest.make_ohlcv` still produces invalid OHLC data — OHLCV strategies (ATR Breakout, Pivot) cannot reliably generate trades with it. |
+| ~~**OHLC validation**~~ | **Done.** Warns on invalid bars. Test data generators (`make_ohlcv`, `make_trending_ohlcv`) fixed to produce valid OHLC. |
 | **Intraday support** | `periods_per_year=252` hard-coded. Need configurable timeframes (1h, 15m, 5m). |
 | **Parameter sensitivity** | No analysis of how small param changes affect results. Fragile params = overfitting. |
 | **Regime detection** | No market regime identification. Strategy may work in trends but fail in chop. |
@@ -197,23 +190,23 @@ Only counts consecutive bars below peak. Doesn't distinguish partial vs. full re
 
 ## Improvement Roadmap
 
-### Phase 1: Bug Fixes & Hardening (Priority)
+### Phase 1: Bug Fixes & Hardening ✅
 
-- [ ] **Unify position tracking** — remove `position_type_tracker` from backtest.py, use `bot.position_type` as sole source of truth
+- [x] **Unify position tracking** — `position_type_tracker` removed; `bot.position_type` is sole source of truth
 - [x] **Force-close positions at backtest end** — long and short positions force-closed; tested
 - [x] **Cap profit factor** — capped at 999.99; tested
 - [x] **Validate OHLC structure** — warns on invalid bars at backtest start
-- [ ] **Reset strategy state between backtests** — ensure `multi_asset.py` always calls reset
+- [x] **Reset strategy state between backtests** — `multi_asset.py` calls `strategy.reset()` between symbols
 - [x] **Log dropped signals** — warns when pending signal conflicts with existing position
-- [ ] **Fix `conftest.make_ohlcv`** — helper produces invalid OHLC data (High < Close, Low > Close). OHLCV strategies can't generate trades with it.
+- [x] **Fix `conftest.make_ohlcv`** — High/Low now computed relative to `max(Open, Close)` / `min(Open, Close)`; 0 invalid bars
 
-### Phase 2: Trade Analytics & Attribution
+### Phase 2: Trade Analytics & Attribution ✅
 
-- [ ] **Exit reason tracking** — add `exit_reason` field to trades: `'sl_hit'`, `'tp_hit'`, `'signal_reversal'`, `'end_of_data'`
-- [ ] **Trade duration** — track bars held for each trade
-- [ ] **Enhanced trade stats** — consecutive wins/losses, largest win/loss, average hold time
-- [ ] **Expectancy calculation** — `(avg_win × win_rate) - (avg_loss × loss_rate)`
-- [ ] **Calmar ratio** — CAGR / max drawdown
+- [x] **Exit reason tracking** — strategies/bot return `('sell', reason)` tuples; trade dicts include `exit_reason`, `bars_held`, `entry_price`
+- [x] **Trade duration** — `bars_held` tracked per trade via `entry_bar_idx` in simulation loop
+- [x] **Enhanced trade stats** — `consecutive_wins`, `consecutive_losses`, `largest_win`, `largest_loss`, `avg_bars_held`, `exit_reason_counts`
+- [x] **Expectancy calculation** — `(avg_win × win_rate) - (avg_loss × loss_rate)` in backtest results
+- [x] **Calmar ratio** — `compute_calmar_ratio()` added to `src/metrics.py`, included in `compute_all_metrics()`
 
 ### Phase 3: Position Sizing & Risk Management
 
@@ -243,21 +236,22 @@ Only counts consecutive bars below peak. Doesn't distinguish partial vs. full re
 
 ## Test Coverage
 
-### Well Tested (167 tests, 12 files)
+### Well Tested (201 tests, 13 files)
 - Fill models (close, next_open, vwap_slippage) — including model comparison tests
 - Slippage & commission math
 - Equity curve tracking and initial capital
 - Bar permutation (MCPT) — shape, columns, reproducibility, positivity
-- All metric calculations (Sharpe, Sortino, CAGR, drawdown, buy-and-hold)
+- All metric calculations (Sharpe, Sortino, CAGR, drawdown, buy-and-hold, Calmar ratio)
 - Optimization and walk-forward parameter validation
 - Force-close open positions at backtest end (long)
 - OHLC validation warnings on bad data
 - Cross-engine validation (src/ vs bt/)
 - Multi-asset backtest structure
 - All 3 strategies: unit tests + smoke tests in both engines
+- Trade analytics: exit reasons, bars held, enhanced stats, expectancy, `_unpack_signal()`
 
 ### Known Test Issues
-- `conftest.make_ohlcv` produces invalid OHLC (High < Close, Low > Close). OHLCV strategies (ATR Breakout, Pivot Points) cannot generate trades with it — integration tests for those strategies are smoke-only (no crash, but no trade assertions).
+- ~~`conftest.make_ohlcv` produces invalid OHLC~~ **Fixed.** High/Low now bracket `max(Open, Close)` / `min(Open, Close)`. All generators produce valid OHLC data.
 - Cross-engine tests use loose tolerances (50% trade count, 25% win rate).
 
 ### Needs More Tests
@@ -273,16 +267,17 @@ Only counts consecutive bars below peak. Doesn't distinguish partial vs. full re
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `src/backtest.py` | ~427 | Main simulation engine |
+| `src/backtest.py` | ~510 | Main simulation engine (with trade analytics) |
 | `src/bot.py` | ~194 | Position & risk management |
 | `src/optimize.py` | ~329 | Parameter optimization |
-| `src/metrics.py` | ~237 | Risk metrics |
-| `src/strategies/base.py` | ~60 | Strategy ABC |
-| `src/strategies/ma_crossover.py` | ~80 | MA crossover strategy |
-| `src/strategies/atr_breakout.py` | ~120 | ATR breakout strategy |
-| `src/strategies/pivot_points.py` | ~110 | Pivot point strategy |
+| `src/metrics.py` | ~255 | Risk metrics (incl. Calmar ratio) |
+| `src/strategies/base.py` | ~93 | Strategy ABC (sell tuples in return types) |
+| `src/strategies/ma_crossover.py` | ~78 | MA crossover strategy |
+| `src/strategies/atr_breakout.py` | ~207 | ATR breakout strategy |
+| `src/strategies/pivot_points.py` | ~171 | Pivot point strategy |
 | `src/multi_asset.py` | ~90 | Multi-symbol backtesting |
 | `src/bar_permute.py` | ~70 | MCPT bar permutation |
 | `tests/test_backtest.py` | ~380 | Backtest engine tests |
+| `tests/test_trade_analytics.py` | ~340 | Trade analytics & attribution tests |
 | `tests/test_metrics.py` | ~175 | Metrics tests |
-| `tests/conftest.py` | ~109 | Shared fixtures & data generators |
+| `tests/conftest.py` | ~113 | Shared fixtures & data generators |

@@ -49,7 +49,7 @@ class MACrossoverStrategy(BaseStrategy):
             return 'buy'
         elif has_position and short_ma < long_ma:
             logging.info("Signal: Sell (MA crossover)")
-            return 'sell'
+            return ('sell', 'signal_reversal')
         else:
             logging.info("Signal: Hold")
             return 'hold'
