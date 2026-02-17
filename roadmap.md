@@ -58,7 +58,7 @@ This phase focuses on testing the simple strategy against historical data to gau
 
 ---
 
-### Phase 3: Backtesting Hardening & Trade Analytics ← **YOU ARE HERE**
+### Phase 3: Backtesting Hardening & Trade Analytics ✅
 
 Before building ML models, fix known issues and add the analytics needed to trust backtest results and understand strategy behavior. See [backtesting.md](backtesting.md) for full details.
 
@@ -81,21 +81,21 @@ Before building ML models, fix known issues and add the analytics needed to trus
   - [x] Add expectancy: `(avg_win × win_rate) - (avg_loss × loss_rate)`.
   - [x] Add Calmar ratio (`compute_calmar_ratio()` in `src/metrics.py`).
 
-- [ ] **Step 3.4: Position Sizing & Risk Management**
-  - [ ] Volatility-scaled position sizing (size based on ATR or rolling std).
-  - [ ] ATR-based trailing stops (adapt to volatility instead of fixed %).
-  - [ ] Breakeven stop option (move SL to entry after configurable profit threshold).
-  - [ ] Max portfolio risk limit (cap total exposure as % of equity).
+- [x] **Step 3.4: Position Sizing & Risk Management**
+  - [x] Volatility-scaled position sizing (size based on ATR or rolling std) — `src/position_sizing.py`.
+  - [x] ATR-based trailing stops (adapt to volatility instead of fixed %) — `trailing_stop_atr` param in `TradingBot`.
+  - [x] Breakeven stop option (move SL to entry after configurable profit threshold) — `breakeven_threshold` param.
+  - [x] Max portfolio risk limit (cap total exposure as % of equity) — `max_portfolio_risk` param.
 
-- [ ] **Step 3.5: Robustness Validation**
-  - [ ] Parameter sensitivity analysis — vary each param ±10-20%, measure metric stability.
-  - [ ] Support configurable timeframes (intraday: 1h, 15m, 5m) with correct annualization.
-  - [ ] Integrate walk-forward as a standard part of backtest runs (not standalone only).
-  - [ ] Expand test coverage: end-of-backtest edge cases, overlapping signals, state leakage, real yfinance data.
+- [x] **Step 3.5: Robustness Validation**
+  - [x] Parameter sensitivity analysis — `src/sensitivity.py` with `analyze_sensitivity()`.
+  - [x] Support configurable timeframes (intraday: 1h, 15m, 5m) with correct annualization — `periods_per_year` param + `infer_periods_per_year()` auto-detection.
+  - [x] Integrate walk-forward as a standard part of backtest runs — `walk_forward=True` param on `run_backtest_on_data()`.
+  - [x] Expand test coverage: end-of-backtest edge cases, overlapping signals, state leakage — 6 new test files (64 new tests).
 
 ---
 
-### Phase 4: Building the Predictive Model
+### Phase 4: Building the Predictive Model ← **YOU ARE HERE**
 
 Build a machine learning model to forecast price movements. The backtesting engine must be hardened (Phase 3) before this phase so results can be trusted.
 

@@ -2,9 +2,6 @@
 
 import numpy as np
 import pandas as pd
-import pytest
-
-from src.bot import TradingBot
 
 
 # ---------------------------------------------------------------------------
@@ -76,37 +73,3 @@ def make_trending_ohlcv(n=200, start=50.0, end=150.0, seed=99):
     )
 
 
-def make_bot(short=5, long=20, trailing_stop_pct=None, stop_loss_pct=None, strategy=None):
-    """Create a TradingBot with deterministic settings (no network calls)."""
-    return TradingBot(
-        symbol="TEST",
-        trade_amount=1,
-        short_window=short,
-        long_window=long,
-        trailing_stop_pct=trailing_stop_pct,
-        stop_loss_pct=stop_loss_pct,
-        strategy=strategy,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Pytest fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def ohlcv_df():
-    """Default 200-bar synthetic OHLCV DataFrame."""
-    return make_ohlcv()
-
-
-@pytest.fixture
-def flat_ohlcv_df():
-    """200-bar flat OHLCV DataFrame."""
-    return make_flat_ohlcv()
-
-
-@pytest.fixture
-def trending_ohlcv_df():
-    """200-bar trending OHLCV DataFrame."""
-    return make_trending_ohlcv()

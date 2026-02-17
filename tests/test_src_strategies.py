@@ -86,36 +86,6 @@ class TestATRBreakoutStrategy:
         assert len(s._closes) == 40
         assert len(s._highs) == 40
 
-    def test_sl_tp_exit_long(self):
-        """When SL/TP is set, hitting SL should produce 'sell'."""
-        s = ATRBreakoutStrategy()
-        # Manually set internal position state
-        s._position_type = 'long'
-        s._sl_price = 90.0
-        s._tp_price = 120.0
-        # Feed enough dummy data to pass warmup
-        for i in range(s.warmup_period + 1):
-            s._highs.append(100 + i * 0.1)
-            s._lows.append(99 + i * 0.1)
-            s._closes.append(100 + i * 0.1)
-        # Price hits SL
-        bar = {'Open': 89, 'High': 91, 'Low': 88, 'Close': 89, 'Volume': 1000}
-        signal = s.on_bar(bar, True, 'long')
-        assert signal == ('sell', 'sl_hit')
-
-    def test_sl_tp_exit_short(self):
-        """Short position: hitting SL (price rises) should produce 'sell'."""
-        s = ATRBreakoutStrategy()
-        s._position_type = 'short'
-        s._sl_price = 110.0
-        s._tp_price = 80.0
-        for i in range(s.warmup_period + 1):
-            s._highs.append(100 + i * 0.1)
-            s._lows.append(99 + i * 0.1)
-            s._closes.append(100 + i * 0.1)
-        bar = {'Open': 111, 'High': 112, 'Low': 110, 'Close': 111, 'Volume': 1000}
-        signal = s.on_bar(bar, True, 'short')
-        assert signal == ('sell', 'sl_hit')
 
 
 # ===========================================================================
@@ -163,36 +133,6 @@ class TestPivotPointStrategy:
         signal = s.on_bar(bar2, False)
         assert signal == 'short'
         assert s._position_type == 'short'
-
-    def test_sl_exit_long(self):
-        """Long position: price hitting SL should produce ('sell', 'sl_hit')."""
-        s = PivotPointStrategy()
-        s._position_type = 'long'
-        s._sl_price = 80.0
-        s._tp_price = 100.0
-        s._prev_high = 110
-        s._prev_low = 90
-        s._prev_close = 100
-        s._prev_bar_close = 95
-
-        bar = {'Open': 79, 'High': 80, 'Low': 78, 'Close': 79, 'Volume': 1000}
-        signal = s.on_bar(bar, True, 'long')
-        assert signal == ('sell', 'sl_hit')
-
-    def test_sl_exit_short(self):
-        """Short position: price hitting SL (rising) should produce ('sell', 'sl_hit')."""
-        s = PivotPointStrategy()
-        s._position_type = 'short'
-        s._sl_price = 120.0
-        s._tp_price = 100.0
-        s._prev_high = 110
-        s._prev_low = 90
-        s._prev_close = 100
-        s._prev_bar_close = 105
-
-        bar = {'Open': 121, 'High': 122, 'Low': 120, 'Close': 121, 'Volume': 1000}
-        signal = s.on_bar(bar, True, 'short')
-        assert signal == ('sell', 'sl_hit')
 
     def test_reset(self):
         s = PivotPointStrategy()

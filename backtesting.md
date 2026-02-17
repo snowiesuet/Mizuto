@@ -160,10 +160,10 @@ Only counts consecutive bars below peak. Doesn't distinguish partial vs. full re
 | Feature | Why It Matters |
 |---------|---------------|
 | ~~**Trade attribution**~~ | **Done.** Exit reasons tracked per trade: `sl_hit`, `tp_hit`, `signal_reversal`, `trailing_sl_hit`, `fixed_sl_hit`, `end_of_data`. |
-| **Position sizing** | Always fixed `trade_amount`. Need Kelly criterion, volatility scaling, or risk-parity. |
+| ~~**Position sizing**~~ | **Done.** Volatility-scaled (`ATR`) and rolling-std sizing in `src/position_sizing.py`. Max portfolio risk cap. |
 | ~~**OHLC validation**~~ | **Done.** Warns on invalid bars. Test data generators (`make_ohlcv`, `make_trending_ohlcv`) fixed to produce valid OHLC. |
-| **Intraday support** | `periods_per_year=252` hard-coded. Need configurable timeframes (1h, 15m, 5m). |
-| **Parameter sensitivity** | No analysis of how small param changes affect results. Fragile params = overfitting. |
+| ~~**Intraday support**~~ | **Done.** `periods_per_year` param on all functions, `infer_periods_per_year()` auto-detection. |
+| ~~**Parameter sensitivity**~~ | **Done.** `src/sensitivity.py` with `analyze_sensitivity()` — varies params ±10-20%, reports stability scores. |
 | **Regime detection** | No market regime identification. Strategy may work in trends but fail in chop. |
 
 ### Important for Robustness
@@ -180,8 +180,8 @@ Only counts consecutive bars below peak. Doesn't distinguish partial vs. full re
 
 | Feature | Details |
 |---------|---------|
-| ATR-based trailing stops | Currently only fixed %. ATR-based would adapt to volatility. |
-| Breakeven stops | Move SL to entry after N% profit. Common risk management technique. |
+| ~~ATR-based trailing stops~~ | **Done.** `trailing_stop_atr` param on TradingBot. Trails by N × ATR, recalculated each bar. |
+| ~~Breakeven stops~~ | **Done.** `breakeven_threshold` param. Moves SL to entry after configurable profit %. |
 | Early stopping in optimization | Grid search runs all combos. Could skip unpromising regions. |
 | Parallel optimization | Single-threaded. `multiprocessing` would speed up significantly. |
 | Vectorized indicators | ATR/Pivot create new Series every bar. Rolling buffers would be faster. |
@@ -208,21 +208,20 @@ Only counts consecutive bars below peak. Doesn't distinguish partial vs. full re
 - [x] **Expectancy calculation** — `(avg_win × win_rate) - (avg_loss × loss_rate)` in backtest results
 - [x] **Calmar ratio** — `compute_calmar_ratio()` added to `src/metrics.py`, included in `compute_all_metrics()`
 
-### Phase 3: Position Sizing & Risk Management
+### Phase 3: Position Sizing & Risk Management ✅
 
-- [ ] **Volatility-scaled sizing** — size positions based on ATR or rolling std
-- [ ] **Kelly criterion** — optimal position size based on win rate and win/loss ratio
-- [ ] **Max portfolio risk** — limit total exposure as % of equity
-- [ ] **ATR trailing stops** — trail stop-loss by N × ATR instead of fixed %
-- [ ] **Breakeven stops** — move SL to entry after configurable profit threshold
+- [x] **Volatility-scaled sizing** — `src/position_sizing.py` with `volatility_scaled_size()` (ATR-based) and `rolling_std_size()`
+- [x] **Max portfolio risk** — `cap_by_max_risk()` limits total exposure as % of equity
+- [x] **ATR trailing stops** — `trailing_stop_atr` param on TradingBot, recalculated each bar
+- [x] **Breakeven stops** — `breakeven_threshold` param, moves SL to entry after configurable profit %
 
-### Phase 4: Robustness & Validation
+### Phase 4: Robustness & Validation ✅
 
-- [ ] **Parameter sensitivity analysis** — vary each param ±10-20% and measure metric stability
+- [x] **Parameter sensitivity analysis** — `src/sensitivity.py` with `analyze_sensitivity()`, per-param sensitivity scores
 - [ ] **Regime-aware backtesting** — classify market regimes (trend/range/volatile) and report per-regime performance
 - [ ] **Stress testing** — test against 2008 crash, COVID crash, flash crash scenarios
-- [ ] **Configurable timeframes** — support intraday bars with correct annualization factors
-- [ ] **Walk-forward as standard workflow** — integrate into default backtest runs, not just standalone
+- [x] **Configurable timeframes** — `periods_per_year` param + `infer_periods_per_year()` auto-detection (5m, 15m, 1h, daily, weekly)
+- [x] **Walk-forward as standard workflow** — `walk_forward=True` param on `run_backtest_on_data()`
 
 ### Phase 5: Portfolio & Production
 
@@ -236,7 +235,7 @@ Only counts consecutive bars below peak. Doesn't distinguish partial vs. full re
 
 ## Test Coverage
 
-### Well Tested (201 tests, 13 files)
+### Well Tested (265 tests, 19 files)
 - Fill models (close, next_open, vwap_slippage) — including model comparison tests
 - Slippage & commission math
 - Equity curve tracking and initial capital
@@ -249,17 +248,21 @@ Only counts consecutive bars below peak. Doesn't distinguish partial vs. full re
 - Multi-asset backtest structure
 - All 3 strategies: unit tests + smoke tests in both engines
 - Trade analytics: exit reasons, bars held, enhanced stats, expectancy, `_unpack_signal()`
+- Position sizing models: fixed, volatility-scaled, rolling-std, max risk cap
+- ATR trailing stops and breakeven stops (long and short)
+- Parameter sensitivity analysis
+- Configurable timeframes and periods_per_year passthrough
+- Walk-forward integration into `run_backtest_on_data()`
+- Robustness: edge cases, overlapping signals, state leakage, empty data
 
 ### Known Test Issues
 - ~~`conftest.make_ohlcv` produces invalid OHLC~~ **Fixed.** High/Low now bracket `max(Open, Close)` / `min(Open, Close)`. All generators produce valid OHLC data.
 - Cross-engine tests use loose tolerances (50% trade count, 25% win rate).
 
 ### Needs More Tests
-- [ ] Position tracking consistency between bot and strategies
 - [ ] `next_open` model edge cases (last bar, gap bars)
-- [ ] Strategy state leakage between backtest runs
 - [ ] Real yfinance data (all current tests use synthetic data)
-- [ ] ATR Breakout integration test with OHLCV-valid synthetic data
+- [ ] Kelly criterion sizing (not yet implemented)
 
 ---
 
@@ -277,6 +280,8 @@ Only counts consecutive bars below peak. Doesn't distinguish partial vs. full re
 | `src/strategies/pivot_points.py` | ~171 | Pivot point strategy |
 | `src/multi_asset.py` | ~90 | Multi-symbol backtesting |
 | `src/bar_permute.py` | ~70 | MCPT bar permutation |
+| `src/position_sizing.py` | ~80 | Position sizing models (volatility, rolling-std, max risk) |
+| `src/sensitivity.py` | ~130 | Parameter sensitivity analysis |
 | `tests/test_backtest.py` | ~380 | Backtest engine tests |
 | `tests/test_trade_analytics.py` | ~340 | Trade analytics & attribution tests |
 | `tests/test_metrics.py` | ~175 | Metrics tests |

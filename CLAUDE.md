@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Mizuto is a Python algorithmic trading bot with two backtesting engines: custom (`src/`) and `backtesting.py`-based (`bt/`). Currently in Phase 3 (Steps 3.1-3.3 complete, 3.4-3.5 remaining). See [roadmap.md](roadmap.md) for full plan, [backtesting.md](backtesting.md) for system analysis and known bugs.
+Mizuto is a Python algorithmic trading bot with two backtesting engines: custom (`src/`) and `backtesting.py`-based (`bt/`). Phase 3 complete, ready for Phase 4 (ML model). See [roadmap.md](roadmap.md) for full plan, [backtesting.md](backtesting.md) for system analysis.
 
 ## Commands
 
@@ -23,7 +23,7 @@ No linter or build system configured. Windows dev environment (`venv\Scripts\act
 
 ## Package Layout
 
-- `src/` — Core library: `bot.py` (decision engine), `backtest.py` (simulation), `metrics.py`, `optimize.py`, `indicators.py`, `bar_permute.py` (MCPT), `multi_asset.py`, `strategies/` (BaseStrategy ABC + 3 strategies)
+- `src/` — Core library: `bot.py` (decision engine), `backtest.py` (simulation), `metrics.py`, `optimize.py`, `indicators.py`, `bar_permute.py` (MCPT), `multi_asset.py`, `position_sizing.py`, `sensitivity.py`, `strategies/` (BaseStrategy ABC + 3 strategies)
 - `bt/` — backtesting.py wrapper: `runner.py` (CLI), `helpers.py` (indicators via `ta`), `strategies/` (3 Strategy subclasses)
 - `scripts/` — CLI tools (MCPT validation, NQ backtest, trailing stop demo)
 - `tests/` — pytest tests
@@ -38,3 +38,9 @@ No linter or build system configured. Windows dev environment (`venv\Scripts\act
 - **MA crossover**: Rolling `price_history` list capped to `long_window` (default 20). MAs computed via pandas rolling.
 - **Historical data**: `load_historical_data(data=None)` — pass DataFrame for backtest, `None` for yfinance fetch.
 - **Fill models**: `close`, `next_open`, `vwap_slippage` — configured per backtest run.
+- **Position sizing**: `position_sizing='volatility'|'rolling_std'|None` on `run_backtest_on_data()`. Configurable `risk_per_trade`, `sizing_atr_multiplier`, `max_portfolio_risk`. Per-trade amounts stored in trade dicts.
+- **ATR trailing stop**: `trailing_stop_atr` param on TradingBot — trails by N × ATR, recalculated each bar. Takes precedence over `trailing_stop_pct`.
+- **Breakeven stop**: `breakeven_threshold` param — moves SL to entry price after configurable profit %.
+- **Timeframes**: `periods_per_year` param flows through backtest → metrics → optimize. `'auto'` triggers `infer_periods_per_year()`.
+- **Walk-forward integration**: `walk_forward=True` on `run_backtest_on_data()` delegates to `walk_forward_optimize()`.
+- **Sensitivity analysis**: `analyze_sensitivity()` in `src/sensitivity.py` — varies params ±10-20%, reports per-param sensitivity scores.

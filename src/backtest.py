@@ -50,12 +50,63 @@ def _validate_ohlc_structure(data):
     return n_high + n_low
 
 
+def infer_periods_per_year(data):
+    """Infer annualization factor from data frequency.
+
+    Examines median time delta between consecutive bars.
+    Falls back to 252 (daily) if detection fails.
+    """
+    if len(data) < 2:
+        return 252
+    try:
+        deltas = pd.Series(data.index).diff().dropna()
+        median_delta = deltas.median()
+        if median_delta <= pd.Timedelta(minutes=10):
+            return int(252 * 6.5 * 12)   # 5m
+        elif median_delta <= pd.Timedelta(minutes=30):
+            return int(252 * 6.5 * 4)    # 15m
+        elif median_delta <= pd.Timedelta(hours=2):
+            return int(252 * 6.5)         # 1h
+        elif median_delta <= pd.Timedelta(days=2):
+            return 252                     # daily
+        else:
+            return 52                      # weekly
+    except Exception:
+        return 252
+
+
+def _compute_trade_amount(position_sizing, trade_amount, equity, current_atr,
+                          closes_buffer, risk_per_trade, sizing_atr_multiplier,
+                          max_portfolio_risk, entry_price, existing_exposure):
+    """Compute dynamic trade amount based on sizing model."""
+    from src.position_sizing import (
+        fixed_size, volatility_scaled_size, rolling_std_size, cap_by_max_risk,
+    )
+    if position_sizing == 'volatility' and current_atr is not None and current_atr > 0:
+        amount = volatility_scaled_size(equity, risk_per_trade, current_atr,
+                                        sizing_atr_multiplier)
+    elif position_sizing == 'rolling_std':
+        amount = rolling_std_size(equity, risk_per_trade, closes_buffer)
+    else:
+        amount = fixed_size(trade_amount)
+
+    if max_portfolio_risk is not None:
+        amount = cap_by_max_risk(amount, entry_price, equity,
+                                 max_portfolio_risk, existing_exposure)
+    return max(amount, 0.0)
+
+
 def run_backtest_on_data(data, symbol="SYN", trade_amount=1.0,
                          short_window=SHORT_WINDOW, long_window=LONG_WINDOW,
                          trailing_stop_pct=None, stop_loss_pct=None,
                          slippage_pct=0.001, commission_pct=0.001, quiet=False,
                          strategy=None, initial_capital=10000.0,
-                         fill_model="close"):
+                         fill_model="close",
+                         position_sizing=None, risk_per_trade=0.02,
+                         sizing_atr_multiplier=2.0, max_portfolio_risk=None,
+                         trailing_stop_atr=None, breakeven_threshold=None,
+                         periods_per_year=252,
+                         walk_forward=False, walk_forward_kwargs=None):
     """
     Run a backtest on a provided DataFrame (no yfinance download).
 
@@ -63,7 +114,7 @@ def run_backtest_on_data(data, symbol="SYN", trade_amount=1.0,
         data: DataFrame with at least a 'Close' column, indexed by date.
               OHLCV strategies require 'Open', 'High', 'Low', 'Close' columns.
         symbol: Symbol name (for logging only).
-        trade_amount: Units per trade.
+        trade_amount: Units per trade (used when position_sizing is None).
         short_window: Short MA window.
         long_window: Long MA window.
         trailing_stop_pct: Trailing stop percentage (None to disable).
@@ -74,6 +125,15 @@ def run_backtest_on_data(data, symbol="SYN", trade_amount=1.0,
         strategy: A BaseStrategy instance (default None = MACrossover).
         initial_capital: Starting portfolio value for equity curve tracking.
         fill_model: Order fill model - 'close' (default), 'next_open', or 'vwap_slippage'.
+        position_sizing: 'volatility', 'rolling_std', or None (fixed size).
+        risk_per_trade: Fraction of equity risked per trade (default 0.02 = 2%).
+        sizing_atr_multiplier: ATR multiplier for stop distance in sizing calc.
+        max_portfolio_risk: Max total exposure as fraction of equity (None = no limit).
+        trailing_stop_atr: ATR multiplier for trailing stop (None to disable).
+        breakeven_threshold: Profit fraction to trigger breakeven stop (None to disable).
+        periods_per_year: Annualization factor (252 for daily, 'auto' to detect).
+        walk_forward: If True, run walk-forward optimization instead of plain backtest.
+        walk_forward_kwargs: Dict of kwargs for walk_forward_optimize() when walk_forward=True.
 
     Returns:
         Dict with keys: 'pnl', 'profit_factor', 'total_commission',
@@ -82,6 +142,7 @@ def run_backtest_on_data(data, symbol="SYN", trade_amount=1.0,
                         'equity_curve', 'equity_dates', 'initial_capital',
                         plus risk-adjusted metrics from src.metrics.
         Returns None if no trades executed.
+        When walk_forward=True, returns walk-forward result dict with 'full_backtest' key.
     """
     prev_level = None
     if quiet:
@@ -89,11 +150,50 @@ def run_backtest_on_data(data, symbol="SYN", trade_amount=1.0,
         logging.root.setLevel(logging.WARNING)
 
     try:
+        # Resolve periods_per_year='auto'
+        resolved_periods = periods_per_year
+        if periods_per_year == 'auto':
+            resolved_periods = infer_periods_per_year(data)
+
+        # Walk-forward integration
+        if walk_forward:
+            from src.optimize import walk_forward_optimize
+            wf_kwargs = dict(walk_forward_kwargs or {})
+            wf_kwargs.setdefault('metric', 'sharpe_ratio')
+            wf_kwargs.setdefault('slippage_pct', slippage_pct)
+            wf_kwargs.setdefault('commission_pct', commission_pct)
+            wf_kwargs.setdefault('strategy', strategy)
+            wf_kwargs.setdefault('periods_per_year', resolved_periods)
+            wf_result = walk_forward_optimize(data, **wf_kwargs)
+            # Also run a full backtest with the walk-forward best params
+            bp = wf_result['train_params']
+            wf_result['full_backtest'] = _run_backtest_on_data_inner(
+                data, symbol, trade_amount,
+                bp['short_window'], bp['long_window'],
+                bp.get('trailing_stop_pct'), bp.get('stop_loss_pct'),
+                slippage_pct, commission_pct,
+                strategy=strategy, initial_capital=initial_capital,
+                fill_model=fill_model,
+                position_sizing=position_sizing, risk_per_trade=risk_per_trade,
+                sizing_atr_multiplier=sizing_atr_multiplier,
+                max_portfolio_risk=max_portfolio_risk,
+                trailing_stop_atr=trailing_stop_atr,
+                breakeven_threshold=breakeven_threshold,
+                periods_per_year=resolved_periods,
+            )
+            return wf_result
+
         return _run_backtest_on_data_inner(
             data, symbol, trade_amount, short_window, long_window,
             trailing_stop_pct, stop_loss_pct, slippage_pct, commission_pct,
             strategy=strategy, initial_capital=initial_capital,
             fill_model=fill_model,
+            position_sizing=position_sizing, risk_per_trade=risk_per_trade,
+            sizing_atr_multiplier=sizing_atr_multiplier,
+            max_portfolio_risk=max_portfolio_risk,
+            trailing_stop_atr=trailing_stop_atr,
+            breakeven_threshold=breakeven_threshold,
+            periods_per_year=resolved_periods,
         )
     finally:
         if quiet and prev_level is not None:
@@ -135,12 +235,21 @@ def _compute_fill_price(base_price, signal_type, slippage_pct, fill_model,
 def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_window,
                                 trailing_stop_pct, stop_loss_pct, slippage_pct, commission_pct,
                                 strategy=None, initial_capital=10000.0,
-                                fill_model="close"):
+                                fill_model="close",
+                                position_sizing=None, risk_per_trade=0.02,
+                                sizing_atr_multiplier=2.0, max_portfolio_risk=None,
+                                trailing_stop_atr=None, breakeven_threshold=None,
+                                periods_per_year=252):
     """Inner implementation — separated so quiet-mode logging restore always runs."""
 
     if data.empty:
         logging.warning("Empty DataFrame passed to run_backtest_on_data.")
         return None
+
+    # Flatten MultiIndex columns (e.g. from yfinance single-ticker download)
+    if isinstance(data.columns, pd.MultiIndex):
+        data = data.copy()
+        data.columns = data.columns.get_level_values(0)
 
     valid_fill_models = ('close', 'next_open', 'vwap_slippage')
     if fill_model not in valid_fill_models:
@@ -150,7 +259,9 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
     bot = TradingBot(symbol, trade_amount,
                      short_window=short_window, long_window=long_window,
                      trailing_stop_pct=trailing_stop_pct, stop_loss_pct=stop_loss_pct,
-                     strategy=strategy)
+                     strategy=strategy,
+                     trailing_stop_atr=trailing_stop_atr,
+                     breakeven_threshold=breakeven_threshold)
 
     uses_ohlcv = bot.strategy.requires_ohlcv
 
@@ -197,6 +308,15 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
     if fill_model == 'vwap_slippage' and 'Volume' in simulation_data.columns:
         median_volume = float(simulation_data['Volume'].median())
 
+    # --- Position sizing state ---
+    has_ohlcv_cols = {'Open', 'High', 'Low', 'Close'}.issubset(data.columns)
+    # Buffer of recent closes for rolling_std sizing and ATR computation
+    closes_buffer = list(data.iloc[:warmup]['Close'].values)
+    highs_buffer = list(data.iloc[:warmup]['High'].values) if has_ohlcv_cols else []
+    lows_buffer = list(data.iloc[:warmup]['Low'].values) if has_ohlcv_cols else []
+    current_trade_amount = trade_amount  # per-position trade amount (updated on entry)
+    existing_exposure = 0.0  # dollar exposure of open position
+
     # --- Backtesting Simulation ---
     trades = []
     pending_signal = None  # For next_open fill model: (signal_type, exit_reason, bar)
@@ -206,6 +326,26 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
     for i, (index, row) in enumerate(sim_rows):
         current_price = float(row['Close'])
 
+        # Update price buffers for sizing/ATR
+        closes_buffer.append(current_price)
+        if has_ohlcv_cols:
+            highs_buffer.append(float(row['High']))
+            lows_buffer.append(float(row['Low']))
+
+        # Compute current ATR for ATR trailing stop and volatility sizing
+        current_atr = None
+        if has_ohlcv_cols and len(highs_buffer) >= 15:
+            try:
+                from src.indicators import compute_atr
+                current_atr = compute_atr(highs_buffer, lows_buffer, closes_buffer, length=14)
+                if np.isnan(current_atr):
+                    current_atr = None
+            except Exception:
+                current_atr = None
+
+        # Set ATR on bot for ATR trailing stop
+        bot._current_atr = current_atr
+
         # --- Execute pending signal from previous bar (next_open model) ---
         if fill_model == 'next_open' and pending_signal is not None:
             pending_sig, pending_exit_reason, pending_bar = pending_signal
@@ -214,20 +354,32 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
 
             if pending_sig == 'buy' and not bot.has_position:
                 fill_price = _compute_fill_price(open_price, 'buy', slippage_pct, fill_model)
+                current_trade_amount = _compute_trade_amount(
+                    position_sizing, trade_amount, cash, current_atr,
+                    closes_buffer, risk_per_trade, sizing_atr_multiplier,
+                    max_portfolio_risk, fill_price, existing_exposure)
                 bot.has_position = True
                 bot._handle_position_entry(fill_price, position_type='long')
                 entry_bar_idx = i
+                existing_exposure = fill_price * current_trade_amount
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
-                               'type': 'buy', 'price': fill_price})
+                               'type': 'buy', 'price': fill_price,
+                               'trade_amount': current_trade_amount})
                 logging.info(f"Simulating BUY at {fill_price:.2f} (open {open_price:.2f}) on {index}")
 
             elif pending_sig == 'short' and not bot.has_position:
                 fill_price = _compute_fill_price(open_price, 'short', slippage_pct, fill_model)
+                current_trade_amount = _compute_trade_amount(
+                    position_sizing, trade_amount, cash, current_atr,
+                    closes_buffer, risk_per_trade, sizing_atr_multiplier,
+                    max_portfolio_risk, fill_price, existing_exposure)
                 bot.has_position = True
                 bot._handle_position_entry(fill_price, position_type='short')
                 entry_bar_idx = i
+                existing_exposure = fill_price * current_trade_amount
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
-                               'type': 'short', 'price': fill_price})
+                               'type': 'short', 'price': fill_price,
+                               'trade_amount': current_trade_amount})
                 logging.info(f"Simulating SHORT at {fill_price:.2f} (open {open_price:.2f}) on {index}")
 
             elif pending_sig == 'sell' and bot.has_position:
@@ -240,20 +392,22 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                 bot._handle_position_exit()
                 # Update cash with realized PnL
                 if closing_position_type == 'long':
-                    realized = (fill_price - closing_entry_price) * trade_amount
+                    realized = (fill_price - closing_entry_price) * current_trade_amount
                 elif closing_position_type == 'short':
-                    realized = (closing_entry_price - fill_price) * trade_amount
+                    realized = (closing_entry_price - fill_price) * current_trade_amount
                 else:
                     realized = 0.0
                 entry_comm = closing_entry_price * commission_pct
                 exit_comm = fill_price * commission_pct
                 cash += realized - entry_comm - exit_comm
+                existing_exposure = 0.0
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
                                'type': 'sell', 'price': fill_price,
                                'closed_position': closing_position_type,
                                'exit_reason': pending_exit_reason,
                                'bars_held': bars_held,
-                               'entry_price': closing_entry_price})
+                               'entry_price': closing_entry_price,
+                               'trade_amount': current_trade_amount})
                 entry_bar_idx = None
                 logging.info(f"Simulating SELL ({closing_position_type}) at {fill_price:.2f} (open {open_price:.2f}) on {index}")
 
@@ -300,21 +454,33 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
             if signal == 'buy' and not bot.has_position:
                 fill_price = _compute_fill_price(current_price, 'buy', slippage_pct,
                                                   fill_model, bar=bar, median_volume=median_volume)
+                current_trade_amount = _compute_trade_amount(
+                    position_sizing, trade_amount, cash, current_atr,
+                    closes_buffer, risk_per_trade, sizing_atr_multiplier,
+                    max_portfolio_risk, fill_price, existing_exposure)
                 bot.has_position = True
                 bot._handle_position_entry(fill_price, position_type='long')
                 entry_bar_idx = i
+                existing_exposure = fill_price * current_trade_amount
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
-                               'type': 'buy', 'price': fill_price})
+                               'type': 'buy', 'price': fill_price,
+                               'trade_amount': current_trade_amount})
                 logging.info(f"Simulating BUY at {fill_price:.2f} (market {current_price:.2f}) on {index}")
 
             elif signal == 'short' and not bot.has_position:
                 fill_price = _compute_fill_price(current_price, 'short', slippage_pct,
                                                   fill_model, bar=bar, median_volume=median_volume)
+                current_trade_amount = _compute_trade_amount(
+                    position_sizing, trade_amount, cash, current_atr,
+                    closes_buffer, risk_per_trade, sizing_atr_multiplier,
+                    max_portfolio_risk, fill_price, existing_exposure)
                 bot.has_position = True
                 bot._handle_position_entry(fill_price, position_type='short')
                 entry_bar_idx = i
+                existing_exposure = fill_price * current_trade_amount
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
-                               'type': 'short', 'price': fill_price})
+                               'type': 'short', 'price': fill_price,
+                               'trade_amount': current_trade_amount})
                 logging.info(f"Simulating SHORT at {fill_price:.2f} (market {current_price:.2f}) on {index}")
 
             elif signal == 'sell' and bot.has_position:
@@ -328,29 +494,31 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
                 bot._handle_position_exit()
                 # Update cash with realized PnL
                 if closing_position_type == 'long':
-                    realized = (fill_price - closing_entry_price) * trade_amount
+                    realized = (fill_price - closing_entry_price) * current_trade_amount
                 elif closing_position_type == 'short':
-                    realized = (closing_entry_price - fill_price) * trade_amount
+                    realized = (closing_entry_price - fill_price) * current_trade_amount
                 else:
                     realized = 0.0
                 entry_comm = closing_entry_price * commission_pct
                 exit_comm = fill_price * commission_pct
                 cash += realized - entry_comm - exit_comm
+                existing_exposure = 0.0
                 trades.append({'date': index.date() if hasattr(index, 'date') else index,
                                'type': 'sell', 'price': fill_price,
                                'closed_position': closing_position_type,
                                'exit_reason': exit_reason,
                                'bars_held': bars_held,
-                               'entry_price': closing_entry_price})
+                               'entry_price': closing_entry_price,
+                               'trade_amount': current_trade_amount})
                 entry_bar_idx = None
                 logging.info(f"Simulating SELL ({closing_position_type}) at {fill_price:.2f} (market {current_price:.2f}) on {index}")
 
         # --- Track equity (mark-to-market) ---
         if bot.position_type == 'long':
-            unrealized = (current_price - bot.entry_price) * trade_amount
+            unrealized = (current_price - bot.entry_price) * current_trade_amount
             portfolio_value = cash + unrealized
         elif bot.position_type == 'short':
-            unrealized = (bot.entry_price - current_price) * trade_amount
+            unrealized = (bot.entry_price - current_price) * current_trade_amount
             portfolio_value = cash + unrealized
         else:
             portfolio_value = cash
@@ -369,9 +537,9 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
         bars_held = (len(sim_rows) - 1 - entry_bar_idx) if entry_bar_idx is not None else 0
 
         if closing_position_type == 'long':
-            realized = (last_price - closing_entry_price) * trade_amount
+            realized = (last_price - closing_entry_price) * current_trade_amount
         elif closing_position_type == 'short':
-            realized = (closing_entry_price - last_price) * trade_amount
+            realized = (closing_entry_price - last_price) * current_trade_amount
         else:
             realized = 0.0
 
@@ -381,6 +549,7 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
 
         bot.has_position = False
         bot._handle_position_exit()
+        existing_exposure = 0.0
 
         trades.append({
             'date': last_date.date() if hasattr(last_date, 'date') else last_date,
@@ -390,6 +559,7 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
             'exit_reason': 'end_of_data',
             'bars_held': bars_held,
             'entry_price': closing_entry_price,
+            'trade_amount': current_trade_amount,
         })
         entry_bar_idx = None
         logging.info(
@@ -529,7 +699,8 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
     try:
         from src.metrics import compute_all_metrics
         metrics = compute_all_metrics(equity_curve, equity_dates,
-                                       simulation_data, initial_capital)
+                                       simulation_data, initial_capital,
+                                       periods_per_year=periods_per_year)
         result.update(metrics)
     except ImportError:
         pass  # metrics module not yet available

@@ -10,7 +10,8 @@ LONG_WINDOW = 20         # Long-term moving average window
 
 class TradingBot:
     def __init__(self, symbol, trade_amount, short_window=SHORT_WINDOW, long_window=LONG_WINDOW,
-                 trailing_stop_pct=None, stop_loss_pct=None, strategy=None):
+                 trailing_stop_pct=None, stop_loss_pct=None, strategy=None,
+                 trailing_stop_atr=None, breakeven_threshold=None):
         logging.info("TradingBot initialized from bot_logic.py - DEBUG TEST")
         self.symbol = symbol
         self.trade_amount = trade_amount
@@ -31,6 +32,19 @@ class TradingBot:
         self.entry_price = None  # Price at which position was entered
         self.highest_price = None  # Highest price since entering position (for trailing stop)
         self.stop_loss_price = None  # Current stop loss price
+
+        # ATR-based trailing stop (takes precedence over pct when both set)
+        self.trailing_stop_atr = trailing_stop_atr  # ATR multiplier (e.g., 2.0 = 2x ATR)
+        self._current_atr = None  # Set externally by backtest loop each bar
+        if trailing_stop_atr is not None and trailing_stop_pct is not None:
+            logging.warning(
+                "Both trailing_stop_atr and trailing_stop_pct set. "
+                "ATR trailing stop takes precedence."
+            )
+
+        # Breakeven stop — move SL to entry after profit threshold
+        self.breakeven_threshold = breakeven_threshold  # e.g., 0.02 = 2% profit
+        self.breakeven_activated = False
 
     def load_historical_data(self, data=None):
         """
@@ -90,6 +104,15 @@ class TradingBot:
                 logging.info(f"Trailing stop-loss triggered! Price {current_price:.2f} <= Stop {self.stop_loss_price:.2f}")
                 return ('sell', 'trailing_sl_hit')
 
+        # --- Breakeven stop (price-only mode) ---
+        if (self.has_position and self.breakeven_threshold is not None
+                and not self.breakeven_activated and self.entry_price is not None):
+            pct_profit = (current_price - self.entry_price) / self.entry_price
+            if pct_profit >= self.breakeven_threshold:
+                self.stop_loss_price = self.entry_price
+                self.breakeven_activated = True
+                logging.info(f"Breakeven stop activated at entry {self.entry_price:.2f}")
+
         # --- Check for fixed stop-loss if we have a position ---
         if self.has_position and self.stop_loss_pct is not None and self.entry_price is not None:
             fixed_stop_price = self.entry_price * (1 - self.stop_loss_pct)
@@ -108,10 +131,30 @@ class TradingBot:
         """
         current_price = float(bar['Close'])
 
-        # --- Bot-level trailing stop-loss ---
-        if self.has_position and self.trailing_stop_pct is not None:
+        # --- Bot-level ATR trailing stop-loss (takes precedence over pct) ---
+        if (self.has_position and self.trailing_stop_atr is not None
+                and self._current_atr is not None):
+            atr_stop_distance = self._current_atr * self.trailing_stop_atr
             if self.position_type == 'short':
-                # For shorts, track lowest price and stop triggers on rise
+                if self.highest_price is None or current_price < self.highest_price:
+                    self.highest_price = current_price
+                # Always recalculate ATR stop (ATR may change, or may override pct-based init)
+                self.stop_loss_price = self.highest_price + atr_stop_distance
+                if current_price >= self.stop_loss_price:
+                    logging.info(f"ATR trailing stop triggered (short)! Price {current_price:.2f} >= Stop {self.stop_loss_price:.2f}")
+                    return ('sell', 'trailing_sl_hit')
+            else:
+                if self.highest_price is None or current_price > self.highest_price:
+                    self.highest_price = current_price
+                # Always recalculate ATR stop (ATR may change, or may override pct-based init)
+                self.stop_loss_price = self.highest_price - atr_stop_distance
+                if current_price <= self.stop_loss_price:
+                    logging.info(f"ATR trailing stop triggered! Price {current_price:.2f} <= Stop {self.stop_loss_price:.2f}")
+                    return ('sell', 'trailing_sl_hit')
+
+        # --- Bot-level pct trailing stop-loss (skipped if ATR trailing active) ---
+        elif self.has_position and self.trailing_stop_pct is not None:
+            if self.position_type == 'short':
                 if self.highest_price is None or current_price < self.highest_price:
                     self.highest_price = current_price
                     self.stop_loss_price = self.highest_price * (1 + self.trailing_stop_pct)
@@ -119,13 +162,28 @@ class TradingBot:
                     logging.info(f"Trailing stop-loss triggered (short)! Price {current_price:.2f} >= Stop {self.stop_loss_price:.2f}")
                     return ('sell', 'trailing_sl_hit')
             else:
-                # Long position (original behavior)
                 if self.highest_price is None or current_price > self.highest_price:
                     self.highest_price = current_price
                     self.stop_loss_price = self.highest_price * (1 - self.trailing_stop_pct)
                 if current_price <= self.stop_loss_price:
                     logging.info(f"Trailing stop-loss triggered! Price {current_price:.2f} <= Stop {self.stop_loss_price:.2f}")
                     return ('sell', 'trailing_sl_hit')
+
+        # --- Breakeven stop ---
+        if (self.has_position and self.breakeven_threshold is not None
+                and not self.breakeven_activated and self.entry_price is not None):
+            if self.position_type == 'long':
+                pct_profit = (current_price - self.entry_price) / self.entry_price
+                if pct_profit >= self.breakeven_threshold:
+                    self.stop_loss_price = self.entry_price
+                    self.breakeven_activated = True
+                    logging.info(f"Breakeven stop activated at entry {self.entry_price:.2f}")
+            elif self.position_type == 'short':
+                pct_profit = (self.entry_price - current_price) / self.entry_price
+                if pct_profit >= self.breakeven_threshold:
+                    self.stop_loss_price = self.entry_price
+                    self.breakeven_activated = True
+                    logging.info(f"Breakeven stop activated at entry {self.entry_price:.2f}")
 
         # --- Bot-level fixed stop-loss ---
         if self.has_position and self.stop_loss_pct is not None and self.entry_price is not None:
@@ -151,7 +209,15 @@ class TradingBot:
         self.entry_price = float(entry_price)
         self.highest_price = float(entry_price)
         self.position_type = position_type
-        if self.trailing_stop_pct is not None:
+        self.breakeven_activated = False
+        # ATR trailing stop initialization (takes precedence)
+        if self.trailing_stop_atr is not None and self._current_atr is not None:
+            atr_dist = self._current_atr * self.trailing_stop_atr
+            if position_type == 'short':
+                self.stop_loss_price = self.entry_price + atr_dist
+            else:
+                self.stop_loss_price = self.entry_price - atr_dist
+        elif self.trailing_stop_pct is not None:
             if position_type == 'short':
                 self.stop_loss_price = self.entry_price * (1 + self.trailing_stop_pct)
             else:
@@ -167,6 +233,8 @@ class TradingBot:
         self.highest_price = None
         self.stop_loss_price = None
         self.position_type = None
+        self.breakeven_activated = False
+        self._current_atr = None
         logging.info("Position exited - stop-loss tracking reset")
 
     def run_strategy(self):

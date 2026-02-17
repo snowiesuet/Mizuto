@@ -107,6 +107,10 @@ def run_bt(
     if data is None:
         data = load_data()
 
+    if isinstance(data.columns, pd.MultiIndex):
+        data = data.copy()
+        data.columns = data.columns.droplevel(1)
+
     bt_cls = FractionalBacktest if fractional else Backtest
     bt = bt_cls(data, strategy_cls, cash=cash, commission=commission)
     stats = bt.run()
@@ -135,6 +139,10 @@ def optimize_bt(
 
     if data is None:
         data = load_data()
+
+    if isinstance(data.columns, pd.MultiIndex):
+        data = data.copy()
+        data.columns = data.columns.droplevel(1)
 
     bt_cls = FractionalBacktest if fractional else Backtest
     bt = bt_cls(data, strategy_cls, cash=cash, commission=commission)

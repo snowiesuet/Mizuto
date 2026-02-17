@@ -13,8 +13,8 @@ from src.metrics import compute_calmar_ratio
 from src.strategies.atr_breakout import ATRBreakoutStrategy
 from src.strategies.ma_crossover import MACrossoverStrategy
 from src.strategies.pivot_points import PivotPointStrategy
-from src.bot import TradingBot, LONG_WINDOW
-from tests.conftest import make_ohlcv, make_trending_ohlcv
+from src.bot import LONG_WINDOW
+from tests.conftest import make_ohlcv
 
 
 # ===========================================================================
@@ -134,32 +134,6 @@ class TestPivotPointExitReasons:
 
 
 # ===========================================================================
-# Bot stop-loss exit reasons
-# ===========================================================================
-
-class TestBotStopLossReasons:
-    def test_trailing_sl_tick(self):
-        bot = TradingBot("TEST", 1, short_window=3, long_window=5,
-                         trailing_stop_pct=0.05)
-        bot.has_position = True
-        bot._handle_position_entry(100.0)
-        # Drive highest to 110
-        bot._run_strategy_logic(110.0)
-        # Drop below trailing stop
-        signal = bot._run_strategy_logic(104.0)
-        assert signal == ('sell', 'trailing_sl_hit')
-
-    def test_fixed_sl_tick(self):
-        bot = TradingBot("TEST", 1, short_window=3, long_window=5,
-                         stop_loss_pct=0.10)
-        bot.has_position = True
-        bot._handle_position_entry(100.0)
-        bot.strategy.price_history = [80.0, 90.0, 100.0, 110.0]
-        signal = bot._run_strategy_logic(89.0)
-        assert signal == ('sell', 'fixed_sl_hit')
-
-
-# ===========================================================================
 # Trade dicts — exit_reason, bars_held, entry_price
 # ===========================================================================
 
@@ -219,8 +193,11 @@ class TestForceCloseExitReason:
             slippage_pct=0.0, commission_pct=0.0, quiet=True,
         )
         assert result is not None
+        assert result['trade_count'] >= 1
+        assert result['pnl'] > 0
         last_trade = result['trades'][-1]
         assert last_trade['type'] == 'sell'
+        assert last_trade['closed_position'] == 'long'
         assert last_trade['exit_reason'] == 'end_of_data'
         assert last_trade['bars_held'] >= 0
 

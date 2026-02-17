@@ -21,6 +21,7 @@ def optimize_strategy(
     metric: str = 'profit_factor',
     slippage_pct: float = 0.001,
     commission_pct: float = 0.001,
+    periods_per_year: int = 252,
 ) -> Tuple[Dict, float]:
     """
     Grid search over strategy parameters to find the best combination.
@@ -61,6 +62,7 @@ def optimize_strategy(
             slippage_pct=slippage_pct,
             commission_pct=commission_pct,
             quiet=True,
+            periods_per_year=periods_per_year,
         )
 
         if result is None:
@@ -139,6 +141,7 @@ def walk_forward_optimize(
     slippage_pct: float = 0.001,
     commission_pct: float = 0.001,
     strategy=None,
+    periods_per_year: int = 252,
 ) -> Dict:
     """
     Walk-forward optimization: optimize on training set, evaluate on test set.
@@ -189,6 +192,7 @@ def walk_forward_optimize(
         metric=metric,
         slippage_pct=slippage_pct,
         commission_pct=commission_pct,
+        periods_per_year=periods_per_year,
     )
 
     # Evaluate on test data with best params
@@ -202,6 +206,7 @@ def walk_forward_optimize(
         commission_pct=commission_pct,
         quiet=True,
         strategy=strategy,
+        periods_per_year=periods_per_year,
     )
 
     test_metric_val = 0.0
@@ -242,6 +247,7 @@ def rolling_walk_forward(
     slippage_pct: float = 0.001,
     commission_pct: float = 0.001,
     strategy=None,
+    periods_per_year: int = 252,
 ) -> Dict:
     """
     Rolling walk-forward optimization across multiple windows.
@@ -304,6 +310,7 @@ def rolling_walk_forward(
                 slippage_pct=slippage_pct,
                 commission_pct=commission_pct,
                 strategy=strategy,
+                periods_per_year=periods_per_year,
             )
             windows.append(result)
         except ValueError as e:

@@ -144,7 +144,11 @@ def compute_cagr(equity_curve, dates, periods_per_year=252):
     if years <= 0:
         return 0.0
 
-    return float((end_val / start_val) ** (1 / years) - 1)
+    ratio = end_val / start_val
+    if ratio <= 0:
+        return -1.0
+
+    return float(ratio ** (1 / years) - 1)
 
 
 def compute_annualized_return(equity_curve, periods_per_year=252):
@@ -167,7 +171,11 @@ def compute_annualized_return(equity_curve, periods_per_year=252):
     if years <= 0:
         return 0.0
 
-    return float((1 + total_return) ** (1 / years) - 1)
+    base = 1 + total_return
+    if base <= 0:
+        return -1.0
+
+    return float(base ** (1 / years) - 1)
 
 
 def compute_calmar_ratio(equity_curve, dates, periods_per_year=252):

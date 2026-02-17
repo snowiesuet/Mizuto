@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from src.bot import TradingBot
 from src.strategies.atr_breakout import ATRBreakoutStrategy
 
@@ -19,11 +19,6 @@ def make_bot(short=5, long=20, trailing_stop_pct=None, stop_loss_pct=None, strat
         stop_loss_pct=stop_loss_pct,
         strategy=strategy,
     )
-
-
-def feed_prices(bot, prices):
-    """Feed a list of prices into the bot's strategy history without triggering strategy."""
-    bot.strategy.price_history = list(prices[-bot.long_window:])
 
 
 # ---------------------------------------------------------------------------

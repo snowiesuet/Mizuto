@@ -81,3 +81,20 @@ def compute_pivot_points(prev_high: float, prev_low: float, prev_close: float) -
     s3 = prev_low - 2 * (prev_high - pp)
     r3 = prev_high + 2 * (pp - prev_low)
     return {"PP": pp, "S1": s1, "S2": s2, "S3": s3, "R1": r1, "R2": r2, "R3": r3}
+
+
+def compute_rolling_std(closes, window: int = 20) -> float:
+    """Return rolling standard deviation of returns over the last *window* periods.
+
+    Args:
+        closes: Array-like of close prices (length >= window + 1).
+        window: Lookback period.
+
+    Returns:
+        Rolling std of returns as float, or NaN if insufficient data.
+    """
+    if len(closes) < window + 1:
+        return float('nan')
+    s = pd.Series(closes, dtype=float)
+    returns = s.pct_change().dropna()
+    return float(returns.rolling(window).std().iloc[-1])

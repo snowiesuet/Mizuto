@@ -143,7 +143,7 @@ class TestFillModel:
             slippage_pct=0.001, commission_pct=0.001, quiet=True,
             fill_model="next_open",
         )
-        # May produce trades or not, but should not error
+        assert result is None or result['trade_count'] >= 0
 
     def test_next_open_requires_open_column(self):
         """next_open with Close-only data should return None."""
@@ -185,7 +185,7 @@ class TestFillModel:
             slippage_pct=0.001, commission_pct=0.001, quiet=True,
             fill_model="vwap_slippage",
         )
-        # Should not error
+        assert result is None or result['trade_count'] >= 0
 
     def test_vwap_slippage_differs_from_close(self):
         """vwap_slippage should produce different fills due to volume scaling."""
@@ -226,29 +226,6 @@ class TestFillModel:
         vwap_fills = [t['price'] for t in result_vwap['trades']]
         assert close_fills != vwap_fills
 
-
-class TestForceCloseAtEnd:
-    def test_open_position_is_force_closed(self):
-        """If backtest ends with an open long, it should be force-closed."""
-        # Pure uptrend: buy signal fires, never sells
-        flat = [100.0] * LONG_WINDOW
-        rising = [100.0 + i * 5 for i in range(1, 31)]
-        prices = flat + rising
-        dates = pd.bdate_range(start="2023-01-01", periods=len(prices))
-        data = pd.DataFrame({"Close": prices}, index=dates)
-
-        result = run_backtest_on_data(
-            data, short_window=5, long_window=20,
-            slippage_pct=0.0, commission_pct=0.0, quiet=True,
-        )
-        assert result is not None
-        # Last trade should be a sell (force-close)
-        last_trade = result['trades'][-1]
-        assert last_trade['type'] == 'sell'
-        assert last_trade['closed_position'] == 'long'
-        # PnL should reflect the unrealized gain
-        assert result['pnl'] > 0
-        assert result['trade_count'] >= 1
 
 class TestProfitFactorCapped:
     def test_profit_factor_not_infinite(self):
