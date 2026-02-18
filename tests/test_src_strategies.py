@@ -15,7 +15,8 @@ from src.strategies.atr_breakout import ATRBreakoutStrategy
 from src.strategies.pivot_points import PivotPointStrategy
 from src.bot import TradingBot
 from src.backtest import run_backtest_on_data
-from tests.conftest import make_ohlcv
+from src.strategies.pivot_points import _infer_pivot_timeframe, _period_key
+from tests.conftest import make_ohlcv, make_intraday_ohlcv
 
 
 # ===========================================================================
@@ -175,6 +176,140 @@ class TestPivotPointStrategy:
         # prev_close=75 < S2=80 and price=82 >= S2=80 → S2 bounce (buy)
         # But also prev_close=75 < S1=90 and price=82 < S1=90 → no S1 bounce
         assert signal == 'buy'
+
+
+# ===========================================================================
+# Timeframe-aware pivot points
+# ===========================================================================
+
+class TestInferPivotTimeframe:
+    def test_intraday_5min(self):
+        df = make_intraday_ohlcv(n_days=3)
+        assert _infer_pivot_timeframe(df) == 'D'
+
+    def test_hourly(self):
+        idx = pd.date_range("2023-01-02 09:30", periods=50, freq='h')
+        df = pd.DataFrame({'High': 110, 'Low': 90, 'Close': 100, 'Open': 100, 'Volume': 1000}, index=idx)
+        assert _infer_pivot_timeframe(df) == 'D'
+
+    def test_daily(self):
+        df = make_ohlcv(n=50)  # bdate_range = daily
+        assert _infer_pivot_timeframe(df) == 'W'
+
+    def test_weekly(self):
+        idx = pd.date_range("2023-01-01", periods=20, freq='W')
+        df = pd.DataFrame({'High': 110, 'Low': 90, 'Close': 100, 'Open': 100, 'Volume': 1000}, index=idx)
+        assert _infer_pivot_timeframe(df) == 'M'
+
+    def test_insufficient_data(self):
+        df = make_ohlcv(n=1)
+        assert _infer_pivot_timeframe(df) is None
+
+
+class TestPeriodKey:
+    def test_day_key(self):
+        ts = pd.Timestamp("2023-03-15 10:30")
+        assert _period_key(ts, 'D') == ts.date()
+
+    def test_week_key(self):
+        ts = pd.Timestamp("2023-03-15")
+        iso = ts.isocalendar()
+        assert _period_key(ts, 'W') == (iso[0], iso[1])
+
+    def test_month_key(self):
+        ts = pd.Timestamp("2023-03-15")
+        assert _period_key(ts, 'M') == (2023, 3)
+
+
+class TestPivotPointTimeframeAware:
+    def test_pivots_change_only_at_day_boundary(self):
+        """With 5-min data + pivot_timeframe='D', pivots should be constant
+        within a day and update when a new day starts."""
+        s = PivotPointStrategy(pivot_timeframe='D')
+
+        # Day 1 bars
+        ts_d1 = pd.Timestamp("2023-01-02 09:30")
+        bar1 = {'Timestamp': ts_d1, 'Open': 100, 'High': 110, 'Low': 90, 'Close': 105, 'Volume': 1000}
+        s.on_bar(bar1, False)
+        assert s._cached_pivots is None  # no previous period yet
+
+        ts_d1b = pd.Timestamp("2023-01-02 09:35")
+        bar2 = {'Timestamp': ts_d1b, 'Open': 105, 'High': 115, 'Low': 95, 'Close': 108, 'Volume': 1000}
+        s.on_bar(bar2, False)
+        assert s._cached_pivots is None  # still in first period
+        # Accumulator should track max/min across bars
+        assert s._period_high == 115
+        assert s._period_low == 90
+
+        # Day 2, first bar → triggers pivot computation from day 1
+        ts_d2 = pd.Timestamp("2023-01-03 09:30")
+        bar3 = {'Timestamp': ts_d2, 'Open': 108, 'High': 112, 'Low': 102, 'Close': 110, 'Volume': 1000}
+        s.on_bar(bar3, False)
+        assert s._cached_pivots is not None
+        # Day 1 aggregated: H=115, L=90, C=108 (last close of day 1)
+        expected = compute_pivot_points(115, 90, 108)
+        assert s._cached_pivots['PP'] == pytest.approx(expected['PP'])
+        assert s._cached_pivots['S1'] == pytest.approx(expected['S1'])
+        assert s._cached_pivots['R1'] == pytest.approx(expected['R1'])
+        pivots_after_d2_start = s._cached_pivots.copy()
+
+        # Another bar on day 2 → pivots stay the same
+        ts_d2b = pd.Timestamp("2023-01-03 09:35")
+        bar4 = {'Timestamp': ts_d2b, 'Open': 110, 'High': 120, 'Low': 105, 'Close': 115, 'Volume': 1000}
+        s.on_bar(bar4, False)
+        assert s._cached_pivots['PP'] == pytest.approx(pivots_after_d2_start['PP'])
+
+    def test_legacy_mode_no_timestamp(self):
+        """Bars without Timestamp → legacy single-bar pivot behavior."""
+        s = PivotPointStrategy(pivot_timeframe=None)
+        bar1 = {'Open': 100, 'High': 110, 'Low': 90, 'Close': 100, 'Volume': 1000}
+        s.on_bar(bar1, False)
+        s._prev_bar_close = 85.0
+        bar2 = {'Open': 88, 'High': 95, 'Low': 85, 'Close': 92, 'Volume': 1000}
+        signal = s.on_bar(bar2, False)
+        assert signal == 'buy'
+
+    def test_load_ohlcv_history_precomputes_pivots(self):
+        """load_ohlcv_history with multi-day intraday data pre-computes pivots."""
+        s = PivotPointStrategy(pivot_timeframe='auto')
+        df = make_intraday_ohlcv(n_days=5)
+        s.load_ohlcv_history(df)
+        assert s._resolved_timeframe == 'D'
+        # Should have pivots from the second-to-last day
+        assert s._cached_pivots is not None
+        assert s._current_period_key is not None
+
+    def test_hlc_aggregation_correctness(self):
+        """Period HLC = max(High), min(Low), last(Close)."""
+        s = PivotPointStrategy(pivot_timeframe='D')
+        # Feed 3 bars on day 1
+        bars_d1 = [
+            {'Timestamp': pd.Timestamp("2023-01-02 09:30"), 'Open': 100, 'High': 105, 'Low': 95, 'Close': 100, 'Volume': 1000},
+            {'Timestamp': pd.Timestamp("2023-01-02 09:35"), 'Open': 100, 'High': 108, 'Low': 96, 'Close': 103, 'Volume': 1000},
+            {'Timestamp': pd.Timestamp("2023-01-02 09:40"), 'Open': 103, 'High': 103, 'Low': 92, 'Close': 97, 'Volume': 1000},
+        ]
+        for b in bars_d1:
+            s.on_bar(b, False)
+
+        assert s._period_high == 108  # max of [105, 108, 103]
+        assert s._period_low == 92    # min of [95, 96, 92]
+        assert s._period_close == 97  # last close
+
+        # Trigger day 2 → pivots computed from day 1 aggregated HLC
+        bar_d2 = {'Timestamp': pd.Timestamp("2023-01-03 09:30"), 'Open': 97, 'High': 100, 'Low': 95, 'Close': 98, 'Volume': 1000}
+        s.on_bar(bar_d2, False)
+        expected = compute_pivot_points(108, 92, 97)
+        assert s._cached_pivots['PP'] == pytest.approx(expected['PP'])
+
+    def test_backtest_integration_intraday(self):
+        """Full backtest with intraday data uses daily pivots."""
+        df = make_intraday_ohlcv(n_days=10, volatility=5.0, seed=123)
+        strategy = PivotPointStrategy(pivot_timeframe='auto')
+        result = run_backtest_on_data(
+            df, strategy=strategy, slippage_pct=0, commission_pct=0, quiet=True,
+        )
+        # Just verify no crash
+        assert result is None or result['trade_count'] >= 0
 
 
 # ===========================================================================

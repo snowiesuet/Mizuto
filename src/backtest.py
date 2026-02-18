@@ -433,6 +433,7 @@ def _run_backtest_on_data_inner(data, symbol, trade_amount, short_window, long_w
         # Dispatch to bar-based or price-based logic
         if uses_ohlcv:
             bar = {
+                'Timestamp': index,
                 'Open': float(row['Open']),
                 'High': float(row['High']),
                 'Low': float(row['Low']),

@@ -41,6 +41,7 @@ No linter or build system configured. Windows dev environment (`venv\Scripts\act
 - **Position sizing**: `position_sizing='volatility'|'rolling_std'|None` on `run_backtest_on_data()`. Configurable `risk_per_trade`, `sizing_atr_multiplier`, `max_portfolio_risk`. Per-trade amounts stored in trade dicts.
 - **ATR trailing stop**: `trailing_stop_atr` param on TradingBot — trails by N × ATR, recalculated each bar. Takes precedence over `trailing_stop_pct`.
 - **Breakeven stop**: `breakeven_threshold` param — moves SL to entry price after configurable profit %.
+- **Pivot point timeframes**: `PivotPointStrategy(pivot_timeframe=...)` controls higher-timeframe pivot source. `'auto'` (default) infers from data frequency: intraday→daily pivots, daily→weekly, weekly→monthly. Explicit `'D'`/`'W'`/`'M'` or `None` (legacy single-bar). Bar dicts include `'Timestamp'` key for period boundary detection; bars without timestamps fall back to legacy behavior.
 - **Timeframes**: `periods_per_year` param flows through backtest → metrics → optimize. `'auto'` triggers `infer_periods_per_year()`.
 - **Walk-forward integration**: `walk_forward=True` on `run_backtest_on_data()` delegates to `walk_forward_optimize()`.
 - **Sensitivity analysis**: `analyze_sensitivity()` in `src/sensitivity.py` — varies params ±10-20%, reports per-param sensitivity scores.

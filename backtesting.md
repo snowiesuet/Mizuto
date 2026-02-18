@@ -84,7 +84,7 @@ Well-structured with clear separation of concerns. Strategy pattern is clean and
 
 **ATR Breakout**: ADX > threshold + price breaks high/low ± ATR×multiplier. Directional via +DI/-DI. SL = 2×ATR, TP = 3×ATR.
 
-**Pivot Points**: S1 bounce (long) and R1 rejection (short). SL at S2/R2, TP at pivot point.
+**Pivot Points**: S1 bounce (long) and R1 rejection (short). SL at S2/R2, TP at pivot point. Timeframe-aware: `pivot_timeframe='auto'` infers higher-TF pivot source (intraday→daily, daily→weekly, weekly→monthly). Aggregates HLC across periods and recomputes pivots only at period boundaries.
 
 ---
 
@@ -277,7 +277,7 @@ Only counts consecutive bars below peak. Doesn't distinguish partial vs. full re
 | `src/strategies/base.py` | ~93 | Strategy ABC (sell tuples in return types) |
 | `src/strategies/ma_crossover.py` | ~78 | MA crossover strategy |
 | `src/strategies/atr_breakout.py` | ~207 | ATR breakout strategy |
-| `src/strategies/pivot_points.py` | ~171 | Pivot point strategy |
+| `src/strategies/pivot_points.py` | ~240 | Pivot point strategy (timeframe-aware) |
 | `src/multi_asset.py` | ~90 | Multi-symbol backtesting |
 | `src/bar_permute.py` | ~70 | MCPT bar permutation |
 | `src/position_sizing.py` | ~80 | Position sizing models (volatility, rolling-std, max risk) |
